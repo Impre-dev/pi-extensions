@@ -8,7 +8,8 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
-| — | (repo git pas encore initié — v0.1 validée visuellement par Impre, commit à faire) | — |
+| v0.1 | Écran d'accueil hub : `/hub` + auto-launch sur home, navigation 2 niveaux (workspaces → discussions), Enter/Ctrl+N/Ctrl+R/Esc, art braille vert flat + shimmer 8 FPS. Validé en TUI par Impre (retours → file v0.2) | `8915832` |
+| — | Backup custom-header archivé dans `custom-header/` avant absorption v0.2 | voir git log |
 
 ## 🎯 File priorisée
 
