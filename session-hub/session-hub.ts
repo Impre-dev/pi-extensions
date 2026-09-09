@@ -63,10 +63,12 @@ const GREEN = "\x1b[32m"; // vert normal — logo header
 const PAD = "  ";
 
 // ── Calibrage chirurgical (itère avec Impre) ──
-const ART_MARGIN_LEFT = 12; // marge gauche du robot (cols)
+// ART_MARGIN_LEFT supprimé : robot+liste sont centrés horizontalement
+// automatiquement sur le milieu de l'écran (bodyX0).
 const LIST_DROP = 9; // décalage vertical : la liste commence sous le haut du robot
 const LIST_WIDTH = 30; // largeur de la colonne liste (labels seuls)
 const ACTION_GAP = 3; // espaces entre les options du bas
+const OPTIONS_OFFSET_X = 1; // micro-ajustement horizontal des options (cols, négatif = gauche)
 
 function padEndVis(s: string, w: number): string {
 	return s + " ".repeat(Math.max(0, w - visibleWidth(s)));
@@ -175,6 +177,7 @@ class HubScreen {
 	// Géométrie du dernier render (hit-test souris)
 	private bodyRow = -1;
 	private bodyHeight = 0;
+	private bodyX0 = 0;
 	private listX0 = 0;
 	private hintRow = -1;
 	private actionSpans: ActionSpan[] = [];
@@ -371,32 +374,36 @@ class HubScreen {
 	// ── Rendu ──
 	private render(width: number): string[] {
 		const w = Math.min(width, 110); // width = 100% du terminal (overlay)
-		const showArt = w >= ART_W + ART_MARGIN_LEFT + LIST_WIDTH + 6;
-		const listW = Math.min(LIST_WIDTH, Math.max(20, w - PAD.length - 2 - (showArt ? ART_MARGIN_LEFT + ART_W + 3 : 0)));
+		const showArt = w >= ART_W + 6 + LIST_WIDTH;
+		const listW = Math.min(LIST_WIDTH, Math.max(20, w - 4 - (showArt ? ART_W + 3 : 0)));
 		const rows = this.tui.terminal.rows || 24;
 
 		const out: string[] = [];
 		out.push("");
 
-		// Art à gauche (vert flat, décollé du bord), liste à droite,
-		// descendue de LIST_DROP lignes par rapport au haut du robot
+		// Body centré horizontalement : robot (gauche) + liste (droite),
+		// la liste descendue de LIST_DROP lignes par rapport au haut du robot
+		const gap = 4; // pair => bodyW pair => centrage à la demi-cellule près
+		const bodyW = (showArt ? ART_W + gap : 0) + listW;
+		const bodyX0 = Math.max(0, Math.round((w - bodyW) / 2));
 		const listLines = [
 			...Array(LIST_DROP).fill(""),
-			...this.selectList.render(showArt ? listW : w - PAD.length - 2),
+			...this.selectList.render(listW),
 		];
 		this.bodyRow = out.length;
-		this.listX0 = PAD.length + (showArt ? ART_MARGIN_LEFT + ART_W + 3 : 0);
+		this.bodyX0 = bodyX0;
+		this.listX0 = bodyX0 + (showArt ? ART_W + gap : 0);
 		const bodyH = Math.max(showArt ? ART_LINES.length : 0, listLines.length);
 		this.bodyHeight = bodyH;
 		for (let y = 0; y < bodyH; y++) {
-			let line = "";
+			let line = " ".repeat(bodyX0);
 			if (showArt) {
 				const raw = ART_LINES[y] ?? "";
 				line += FLAT + raw + RESET;
 				line += " ".repeat(ART_W - visibleWidth(raw) + 3);
 			}
 			line += listLines[y] ?? "";
-			out.push(PAD + line);
+			out.push(line);
 		}
 
 		// Pousser les options juste au-dessus de la chatbox pi : l'overlay
@@ -415,12 +422,17 @@ class HubScreen {
 		let hint = "";
 		const spans: Array<{ x0: number; x1: number; run: () => void }> = [];
 		for (const a of actions) {
+			if (hint) hint += " ".repeat(ACTION_GAP);
 			const x0 = visibleWidth(hint);
 			hint += (a.dimmed ? t.fg("dim", a.label) : t.fg("accent", t.bold(a.label))) + RESET;
-			hint += t.fg("dim", ` ${a.hint}`) + RESET + " ".repeat(ACTION_GAP);
-			spans.push({ x0, x1: visibleWidth(hint) - ACTION_GAP, run: a.run });
+			hint += t.fg("dim", ` ${a.hint}`) + RESET;
+			spans.push({ x0, x1: visibleWidth(hint), run: a.run });
 		}
-		const padL = Math.max(0, Math.floor((w - visibleWidth(hint)) / 2));
+		// Options centrées sur l'axe du body (même centre que robot+liste)
+		const padL = Math.max(
+			0,
+			Math.round(bodyX0 + bodyW / 2 - visibleWidth(hint) / 2) + OPTIONS_OFFSET_X,
+		);
 		this.hintRow = out.length;
 		this.actionSpans = spans.map((s) => ({ x0: s.x0 + padL, x1: s.x1 + padL, run: s.run }));
 		out.push(" ".repeat(padL) + hint);
