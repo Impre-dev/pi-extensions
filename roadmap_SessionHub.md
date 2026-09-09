@@ -8,6 +8,7 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
+| v0.13 | Sons d'action : daemon AHK v2 résident (SoundPlay→MCI) amorcé à l'ouverture du hub ; chaque action écrit le chemin du .wav sur son stdin (~0ms — l'ancien stub PS one-shot était mort sur 3 étages prouvés au chrono : backslashes dévorés par l'échappement, MP3 rejeté par SoundPlayer, .Play/detached coupant la lecture). Son sur toutes les actions (6 greffes, zéro doublon), curseur muet par design. Assets install non versionnés : resources/key.wav + sound-daemon.ahk. | e6401e1 |
 | v0.12 | Esc à la racine = quit pi PARTOUT (lancement home OU ctrl+h depuis une session) — le dernier cheveu du centrage UX. Esc dans les discussions = retour, inchangé. | 929b9e4 |
 | v0.11 | QUITTER DÉTERMINISTE : le bug — le bouton Quitter appelait onEscape (fermait le hub sans quitter), le process.exit n'était jamais atteint. Fix : le bouton déclenche action:quit → writeSync(clear) + process.exit(0) (shutdown deferred avalé pendant le startup — doc ne couvre pas le cas). Esc racine sur home = quit pi aussi. | 081bfad |
 | v0.10.1 | OPTIONS_OFFSET_X scindé en `RACINE_ACTIONS_OFFSET_X` (=1, calibré) / `SESSIONS_ACTIONS_OFFSET_X` (=0, validé par Impre) — centrage fin des options du bas indépendant par niveau. Autres constantes chirurgical conservées. | ac98414 |
