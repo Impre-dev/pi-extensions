@@ -9,7 +9,6 @@
 | Version | Contenu | Commit |
 |---|---|---|
 | v0.4 | Robot braille (401×443 dots, 28 lignes) remplace la tête anime. `use-art.mjs` : autocrop bounding box (AUTOCROP=1 par défaut), chemins fixés, assets originaux archivés dans `dev/` (robot-original, robot-v2, ghost) — rollback d'art en une commande. v2 du robot testée puis écartée | 9db606a |
-| v0.12 | Esc à la racine = quit pi PARTOUT (lancement home OU ctrl+h depuis une session) — le dernier cheveu du centrage UX. Esc dans les discussions = retour, inchangé. | voir git log |
 | v0.11 | QUITTER DÉTERMINISTE : le bug — le bouton Quitter appelait onEscape (fermait le hub sans quitter), le process.exit n'était jamais atteint. Fix : le bouton déclenche action:quit → writeSync(clear) + process.exit(0) (shutdown deferred avalé pendant le startup — doc ne couvre pas le cas). Esc racine sur home = quit pi aussi. | 081bfad |
 | v0.10.1 | OPTIONS_OFFSET_X scindé en `RACINE_ACTIONS_OFFSET_X` (=1, calibré) / `SESSIONS_ACTIONS_OFFSET_X` (=0, validé par Impre) — centrage fin des options du bas indépendant par niveau. Autres constantes chirurgical conservées. | ac98414 |
 | v0.10 | RÉGRESSION RÉSOLUE : le switch direct fonctionne du premier coup. Coeur : `pi.sendUserMessage(`/hub <id>`, { deliverAs: "followUp", expandPromptTemplates: true })` — pi exécute la commande /hub avec un ctx command (le pouvoir). Réécriture complète du fichier (base v0.8.1 + robot v0.4 + nouveau coeur), validée en TUI par Impre. Leçon 10 violée puis actée : la généalogie n'importe pas, la validation TUI fait la base saine. | e495726 |
