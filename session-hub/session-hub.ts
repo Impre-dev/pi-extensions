@@ -14,7 +14,8 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { SessionManager, VERSION } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir, SessionManager, VERSION } from "@earendil-works/pi-coding-agent";
+import { spawn } from "node:child_process";
 import { matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { SelectList, type SelectItem, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
@@ -139,7 +140,7 @@ async function collectWorkspaces(): Promise<Workspace[]> {
 
 // ── Résultat du hub ──
 interface HubResult {
-	action: "switch" | "new" | "quit" | "rename";
+	action: "switch" | "new" | "quit" | "rename" | "home";
 	path?: string;
 	cwd?: string;
 	label?: string;
@@ -306,8 +307,23 @@ class HubScreen {
 	}
 
 	private triggerNew(): void {
-		const cwd = this.level === "sessions" ? this.workspaceCwd : this.selectedWorkspaceCwd();
+		if (this.level !== "sessions") return;
+		const cwd = this.workspaceCwd;
 		if (cwd) this.finish({ action: "new", cwd });
+	}
+
+	private triggerHome(): void {
+		this.finish({ action: "home" });
+	}
+
+	private triggerDossier(): void {
+		// Ouvre l'explorateur sur ~/.pi/agent — le hub reste ouvert.
+		const child = spawn("explorer.exe", [getAgentDir()], {
+			detached: true,
+			stdio: "ignore",
+		});
+		child.unref();
+		this.tui.requestRender();
 	}
 
 	private triggerRename(): void {
@@ -323,13 +339,24 @@ class HubScreen {
 			this.onEscape();
 			return;
 		}
-		if (matchesKey(data, "ctrl+n")) {
-			this.triggerNew();
-			return;
-		}
-		if (matchesKey(data, "ctrl+r") && this.level === "sessions") {
-			this.triggerRename();
-			return;
+		if (this.level === "workspaces") {
+			if (matchesKey(data, "ctrl+a")) {
+				this.triggerHome();
+				return;
+			}
+			if (matchesKey(data, "ctrl+d")) {
+				this.triggerDossier();
+				return;
+			}
+		} else {
+			if (matchesKey(data, "ctrl+n")) {
+				this.triggerNew();
+				return;
+			}
+			if (matchesKey(data, "ctrl+r")) {
+				this.triggerRename();
+				return;
+			}
 		}
 		this.selectList.handleInput(data);
 		this.tui.requestRender();
@@ -414,17 +441,24 @@ class HubScreen {
 
 		// Options du bas, centrées — cliquables (fullscreen) + raccourcis clavier
 		const t = this.t();
-		const actions: Array<{ label: string; hint: string; dimmed: boolean; run: () => void }> = [
-			{ label: "New", hint: "(ctrl+n)", dimmed: false, run: () => this.triggerNew() },
-			{ label: "Rename", hint: "(ctrl+r)", dimmed: this.level !== "sessions", run: () => this.triggerRename() },
-			{ label: "Quitter", hint: "(esc)", dimmed: false, run: () => this.onEscape() },
-		];
+		const actions: Array<{ label: string; hint: string; run: () => void }> =
+			this.level === "workspaces"
+				? [
+						{ label: "Accueil", hint: "(ctrl+a)", run: () => this.triggerHome() },
+						{ label: "Dossier", hint: "(ctrl+d)", run: () => this.triggerDossier() },
+						{ label: "Quitter", hint: "(esc)", run: () => this.onEscape() },
+					]
+				: [
+						{ label: "New", hint: "(ctrl+n)", run: () => this.triggerNew() },
+						{ label: "Rename", hint: "(ctrl+r)", run: () => this.triggerRename() },
+						{ label: "Retour", hint: "(esc)", run: () => this.onEscape() },
+					];
 		let hint = "";
 		const spans: Array<{ x0: number; x1: number; run: () => void }> = [];
 		for (const a of actions) {
 			if (hint) hint += " ".repeat(ACTION_GAP);
 			const x0 = visibleWidth(hint);
-			hint += (a.dimmed ? t.fg("dim", a.label) : t.fg("accent", t.bold(a.label))) + RESET;
+			hint += t.fg("accent", t.bold(a.label)) + RESET;
 			hint += t.fg("dim", ` ${a.hint}`) + RESET;
 			spans.push({ x0, x1: visibleWidth(hint), run: a.run });
 		}
@@ -462,48 +496,20 @@ async function actOnResult(result: HubResult | null, ctx: HubContext): Promise<v
 	if (!result) return;
 
 	if (result.action === "quit") {
+		// Clear ANSI : écran + scrollback + curseur en haut, puis sortie.
+		process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
 		ctx.shutdown();
 		return;
 	}
 
-	const sw = getSwitch(ctx);
-	if (!sw) {
-		// ctx d'event sans méthodes runtime : fallback propre.
-		ctx.ui.setEditorText("/hub");
-		ctx.ui.notify("Appuie ↵ pour ouvrir le hub", "info");
-		return;
-	}
-
-	if (result.action === "switch" && result.path) {
-		const label = result.label ?? "";
-		await sw(result.path, {
-			withSession: async (c) => {
-				c.ui.notify(`Reprise : ${label}`, "info");
-			},
-		});
-		return;
-	}
-
-	if (result.action === "new" && result.cwd) {
-		const cwd = result.cwd;
-		const sm = SessionManager.create(cwd);
-		const file = sm.getSessionFile();
-		if (!file) {
-			ctx.ui.notify("Création de session impossible", "error");
-			return;
-		}
-		await sw(file, {
-			withSession: async (c) => {
-				c.ui.notify(
-					`Nouvelle session dans ${basename(cwd)} — /name pour la nommer`,
-					"info",
-				);
-			},
-		});
+	if (result.action === "home") {
+		// Restaure le header natif de pi (version, extensions, AGENTS.md…)
+		ctx.ui.setHeader(undefined);
 		return;
 	}
 
 	if (result.action === "rename" && result.path) {
+		// Le renommage est du filesystem : pas besoin de ctx command.
 		const name = await ctx.ui.input("Nom de la session :", result.label ?? "");
 		if (name?.trim()) {
 			try {
@@ -513,20 +519,105 @@ async function actOnResult(result: HubResult | null, ctx: HubContext): Promise<v
 				ctx.ui.notify(`Échec du renommage : ${e instanceof Error ? e.message : String(e)}`, "error");
 			}
 		}
-		// Retour au hub après le renommage.
 		const again = await openHub(ctx, { autoLaunched: false });
 		await actOnResult(again, ctx);
+		return;
+	}
+
+	// switch / new : nécessitent un ctx command. Depuis un ctx d'event,
+	// fallback : on préremplit /hub avec l'action exacte — un Enter suffit.
+	const sw = getSwitch(ctx);
+	if (sw) {
+		if (result.action === "switch" && result.path) {
+			const label = result.label ?? "";
+			await sw(result.path, {
+				withSession: async (c) => {
+					c.ui.notify(`Reprise : ${label}`, "info");
+				},
+			});
+			return;
+		}
+		if (result.action === "new" && result.cwd) {
+			const cwd = result.cwd;
+			const sm = SessionManager.create(cwd);
+			const file = sm.getSessionFile();
+			if (!file) {
+				ctx.ui.notify("Création de session impossible", "error");
+				return;
+			}
+			await sw(file, {
+				withSession: async (c) => {
+					c.ui.notify(
+						`Nouvelle session dans ${basename(cwd)} — /name pour la nommer`,
+						"info",
+					);
+				},
+			});
+			return;
+		}
+		return;
+	}
+
+	if (result.action === "switch" && result.path) {
+		ctx.ui.setEditorText(`/hub ${result.path}`);
+		ctx.ui.notify("Appuie ↵ pour reprendre la discussion", "info");
+		return;
+	}
+	if (result.action === "new" && result.cwd) {
+		ctx.ui.setEditorText(`/hub --new ${result.cwd}`);
+		ctx.ui.notify("Appuie ↵ pour créer la session", "info");
+		return;
 	}
 }
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("hub", {
-		description: "Session hub — workspaces & discussions",
-		handler: async (_args, ctx) => {
+		description: "Session hub — workspaces & discussions (/hub <path> pour reprendre, /hub --new <cwd> pour créer)",
+		handler: async (args, ctx) => {
 			if (ctx.mode !== "tui" || !ctx.hasUI) {
 				ctx.ui.notify("Session hub : mode TUI uniquement", "warning");
 				return;
 			}
+
+			// /hub --new <cwd> : créer une session dans le workspace donné
+			const trimmed = (args ?? "").trim();
+			if (trimmed.startsWith("--new ")) {
+				const cwd = trimmed.slice(6).trim();
+				if (cwd) {
+					const sw = getSwitch(ctx);
+					const sm = SessionManager.create(cwd);
+					const file = sm.getSessionFile();
+					if (sw && file) {
+						await sw(file, {
+							withSession: async (c) => {
+								c.ui.notify(`Nouvelle session dans ${basename(cwd)}`, "info");
+							},
+						});
+						return;
+					}
+				}
+			}
+
+			// /hub <path|id> : reprendre directement une session
+			if (trimmed && !trimmed.startsWith("--")) {
+				const all = await SessionManager.listAll();
+				const match =
+					all.find((s) => s.path === trimmed) ??
+					all.find((s) => s.id.startsWith(trimmed)) ??
+					all.find((s) => s.path.toLowerCase() === trimmed.toLowerCase());
+				if (match) {
+					const sw = getSwitch(ctx);
+					if (sw) {
+						await sw(match.path, {
+							withSession: async (c) => {
+								c.ui.notify(`Reprise : ${match.name || basename(match.path)}`, "info");
+							},
+						});
+						return;
+					}
+				}
+			}
+
 			const result = await openHub(ctx, { autoLaunched: false });
 			await actOnResult(result, ctx);
 		},
