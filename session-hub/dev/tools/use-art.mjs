@@ -22,9 +22,12 @@ if (!inp) {
 	process.exit(1);
 }
 
-// 1. Resize vers un fichier de travail
-const tmp = join(here, "..", "dev", "art-new.txt");
-execFileSync(process.execPath, [join(here, "braille-resize.mjs"), inp, tmp, String(targetW)], { stdio: "inherit" });
+// 1. Resize vers un fichier de travail (autocrop : bounding box des dots)
+const tmp = join(here, "..", "art-new.txt");
+execFileSync(process.execPath, [join(here, "braille-resize.mjs"), inp, tmp, String(targetW)], {
+	stdio: "inherit",
+	env: { ...process.env, AUTOCROP: "1" },
+});
 
 // 2. Lecture + génération du bloc TS
 const lines = readFileSync(tmp, "utf8")
@@ -35,7 +38,7 @@ const lines = readFileSync(tmp, "utf8")
 const block = `const ART_LINES: string[] = [\n${lines.join("\n")}\n];`;
 
 // 3. Injection dans session-hub.ts (remplace le tableau entier)
-const tsPath = join(here, "..", "session-hub.ts");
+const tsPath = join(here, "..", "..", "session-hub.ts");
 let code = readFileSync(tsPath, "utf8");
 const re = /const ART_LINES: string\[\] = \[\n[\s\S]*?\n\];/;
 if (!re.test(code)) {

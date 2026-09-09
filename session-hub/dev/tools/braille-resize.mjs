@@ -68,22 +68,45 @@ for (let y = 0; y < lines.length; y++) {
   }
 }
 
+// ── Auto-crop optionnel (AUTOCROP=1) : bounding box des dots allumés ──
+let gridW = dotsW, gridH = dotsH, gx0 = 0, gy0 = 0;
+if (process.env.AUTOCROP === "1") {
+  let minX = dotsW, minY = dotsH, maxX = -1, maxY = -1;
+  for (let y = 0; y < dotsH; y++) {
+    for (let x = 0; x < dotsW; x++) {
+      if (grid[y * dotsW + x]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX >= minX && maxY >= minY) {
+    gx0 = minX;
+    gy0 = minY;
+    gridW = maxX - minX + 1;
+    gridH = maxY - minY + 1;
+    console.log(`Autocrop : ${dotsW}×${dotsH} → ${gridW}×${gridH} dots`);
+  }
+}
+
 // ── Cible (ratio dots conservé) ──
-const targetDotsH = Math.max(1, Math.round((targetDotsW * dotsH) / dotsW));
+const targetDotsH = Math.max(1, Math.round((targetDotsW * gridH) / gridW));
 const targetW = Math.ceil(targetDotsW / 2);
 const targetH = Math.ceil(targetDotsH / 4);
 
 // ── Box average ──
 const out = [];
 for (let ty = 0; ty < targetDotsH; ty++) {
-  const sy0 = Math.floor((ty * dotsH) / targetDotsH);
-  const sy1 = Math.max(sy0 + 1, Math.floor(((ty + 1) * dotsH) / targetDotsH));
+  const sy0 = Math.floor((ty * gridH) / targetDotsH);
+  const sy1 = Math.max(sy0 + 1, Math.floor(((ty + 1) * gridH) / targetDotsH));
   for (let tx = 0; tx < targetDotsW; tx++) {
-    const sx0 = Math.floor((tx * dotsW) / targetDotsW);
-    const sx1 = Math.max(sx0 + 1, Math.floor(((tx + 1) * dotsW) / targetDotsW));
+    const sx0 = Math.floor((tx * gridW) / targetDotsW);
+    const sx1 = Math.max(sx0 + 1, Math.floor(((tx + 1) * gridW) / targetDotsW));
     let sum = 0, n = 0;
-    for (let sy = sy0; sy < sy1 && sy < dotsH; sy++)
-      for (let sx = sx0; sx < sx1 && sx < dotsW; sx++) { sum += grid[sy * dotsW + sx]; n++; }
+    for (let sy = sy0; sy < sy1 && sy < gridH; sy++)
+      for (let sx = sx0; sx < sx1 && sx < gridW; sx++) { sum += grid[(gy0 + sy) * dotsW + (gx0 + sx)]; n++; }
     out.push(n > 0 && sum / n >= threshold ? 1 : 0);
   }
 }
@@ -105,6 +128,5 @@ for (let cy = 0; cy < targetH; cy++) {
 }
 
 writeFileSync(outp, result.join("\n") + "\n");
-console.log(`Source : ${dotsW}×${dotsH} dots (${width}×${lines.length} chars)`);
-console.log(`Cible  : ${targetDotsW}×${targetDotsH} dots (${targetW}×${targetH} chars)`);
+console.log(`Source : ${dotsW}×${dotsH} dots (${width}×${lines.length} chars)`);console.log(`Cible  : ${targetDotsW}×${targetDotsH} dots (${targetW}×${targetH} chars)`);
 console.log(`Écrit  : ${outp}`);

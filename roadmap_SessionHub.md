@@ -8,6 +8,7 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
+| v0.4 | Robot braille (401×443 dots, 28 lignes) remplace la tête anime. `use-art.mjs` : autocrop bounding box (AUTOCROP=1 par défaut), chemins fixés, assets originaux archivés dans `dev/` (robot-original, robot-v2, ghost) — rollback d'art en une commande. v2 du robot testée puis écartée | à hasher |
 | v0.3 | Mode overlay (`anchor: "top-center"`) : hub flottant en haut de fenêtre. Inversion art/liste testée puis annulée (art à gauche). Tout-vert testé puis annulé (couleurs thème). Titre « Session hub » viré. Options centrées flottant au-dessus de la chatbox (`CHATBOX_H`). Outil `use-art.mjs` : changement d'art en une commande | ba954af |
 | v0.2 | Cosmétique : art statique vert flat, zéro bordure, padding. Fusion header : session-hub absorbe custom-header.ts (logo pi en session normale, header minimal sur home, custom-header retiré de l'install — backup `custom-header/`). Souris : `handleMouse` (liste + molette + options du bas cliquables, actif fullscreen), libellés New/Rename/Quitter | `59b5356` |
 | v0.1 | Écran d'accueil hub : `/hub` + auto-launch sur home, navigation 2 niveaux (workspaces → discussions), Enter/Ctrl+N/Ctrl+R/Esc, art braille vert flat + shimmer 8 FPS. Validé en TUI par Impre (retours → file v0.2) | `8915832` |
@@ -29,3 +30,4 @@
 5. **`TuiMouseEvent` (x, y) est local au composant récepteur** — pour forwarder à un enfant rendu dans une sous-zone, retarget manuel (shift x/y) avant `handleMouse` enfant.
 6. **`ctx.setHeader` se rejoue à chaque `session_start`** — un replacement de session (switch) re-fire `session_start` : un seul handler gère les deux modes (hub sur home, logo ailleurs).
 7. **Mode overlay** : `ctx.ui.custom(factory, { overlay: true, overlayOptions })` — anchors `top-center` etc. Le hub connaît la hauteur du terminal via `tui.terminal.rows` : filler calculé dans le render pour ancrer les options juste au-dessus de la chatbox (`CHATBOX_H`).
+8. **Changement d'art = une commande** (`use-art.mjs`) — `ART_W` est dérivé du tableau injecté, le layout se recalcule tout seul. Les assets originaux sont archivés dans `dev/` : rollback en relançant l'ancien fichier. L'autocrop (bounding box des dots) préserve la résolution quand l'art source a des marges vides.
