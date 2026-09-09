@@ -25,7 +25,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR_NAME, getAgentDir, SessionManager, VERSION } from "@earendil-works/pi-coding-agent";
 import { spawn, type ChildProcess } from "node:child_process";
-import { writeSync, writeFileSync } from "node:fs";
+import { existsSync, writeSync, writeFileSync } from "node:fs";
 import { matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { SelectList, type SelectItem, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
@@ -85,6 +85,23 @@ const SESSIONS_ACTIONS_OFFSET_X = 0; // options du bas, niveau discussions (à t
 const ACTION_SOUND: string = join(getAgentDir(), "extensions", "resources", "key.wav"); // son d'action (.wav — vide = muet)
 const SOUND_PLAYER: string = "C:\\Program Files\\AutoHotkey\\v2\\AutoHotkey64.exe"; // lecteur AHK v2 — ~100ms de démarrage vs ~370ms PowerShell (benché 09/09)
 const SOUND_SCRIPT: string = join(getAgentDir(), "extensions", "resources", "sound-daemon.ahk"); // daemon AHK : boucle stdin → SoundPlay
+
+// SessionManager.create() ne flush pas le fichier (lazy) : le .jsonl n'existe PAS sur
+// disque au retour. Or switchSession → SessionManager.open() exige un fichier existant —
+// sans header sur disque, il retombe sur process.cwd() (le chemin d'ouverture de pi) :
+// la session tournait au mauvais endroit avec un header contaminé (prouvé par logs 10/09).
+// Fix : flusher le header officiel (getHeader) avant tout switch.
+function createFlushedSession(cwd: string): string | undefined {
+	const sm = SessionManager.create(cwd);
+	const file = sm.getSessionFile();
+	if (!file) return undefined;
+	if (!existsSync(file)) {
+		const header = sm.getHeader();
+		if (!header) return undefined;
+		writeFileSync(file, `${JSON.stringify(header)}\n`);
+	}
+	return file;
+}
 
 function diagLog(msg: string): void {
 	try {
@@ -648,8 +665,7 @@ async function actOnResult(
 
 	if (sw && result.action === "new" && result.cwd) {
 		const cwd = result.cwd;
-		const sm = SessionManager.create(cwd);
-		const file = sm.getSessionFile();
+		const file = createFlushedSession(cwd);
 		if (!file) {
 			ctx.ui.notify("Création de session impossible", "error");
 			return;
@@ -698,8 +714,7 @@ export default function (pi: ExtensionAPI) {
 			if (trimmed.startsWith("--new ")) {
 				const cwd = trimmed.slice(6).trim();
 				if (cwd) {
-					const sm = SessionManager.create(cwd);
-					const file = sm.getSessionFile();
+					const file = createFlushedSession(cwd);
 					const sw = getSwitch(ctx);
 					if (sw && file) {
 						await sw(file, {
