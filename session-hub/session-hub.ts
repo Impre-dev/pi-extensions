@@ -1,23 +1,22 @@
 /**
- * Session Hub — écran d'accueil pi : workspaces & discussions, art animé.
+ * Session Hub — écran d'accueil pi : workspaces & discussions, art braille.
  *
- * - Lancé depuis le home : le hub s'ouvre d'office (Esc = quitte pi)
+ * - Lancé depuis le home : le hub s'ouvre d'office avec un header minimal
+ *   (Esc = quitte pi). En session normale : header logo pi + version
+ *   (session-hub absorbe l'ex-custom-header.ts).
  * - `/hub` : ouvre le hub depuis n'importe quelle session
  * - Niveau 1 : les 10 derniers workspaces (par activité) + « tous »
  * - Niveau 2 : les 10 dernières discussions du workspace + « toutes »
  * - Enter : reprendre · Ctrl+N : nouvelle session · Ctrl+R : renommer
  *   Esc : retour arrière (ou quitte pi si auto-launch)
- *
- * L'animation de l'art utilise un timer :
- * LAST RESORT: le shimmer est un phénomène purement temporel — aucun
- * événement alternatif n'existe pour « le temps passe ». Le timer ne vit
- * que pendant l'écran d'accueil et est tué à sa fermeture (finish()).
+ * - Souris : liste et options du bas cliquables — capture active en mode
+ *   fullscreen (`tuiMode: "fullscreen"`) ; en regular, clavier seulement.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder, SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager, VERSION } from "@earendil-works/pi-coding-agent";
 import { matchesKey, visibleWidth } from "@earendil-works/pi-tui";
-import { SelectList, type SelectItem } from "@earendil-works/pi-tui";
+import { SelectList, type SelectItem, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 
@@ -26,7 +25,7 @@ type SessionInfo = Awaited<ReturnType<typeof SessionManager.listAll>>[number];
 
 // ── Art (braille, généré depuis ghost-small.txt — tête de fille anime) ──
 const ART_LINES: string[] = [
-"⣿⣿⣿⠁",
+		"⣿⣿⣿⠁",
 		"⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀",
 		"⣿⣿⣿⠀⠀⠀⠀⠀⠀⠆⠀⠀⠀⠀⠀⠀⠀⡆⠈⣆",
 		"⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⠀⠸⠀⠀⠀⠀⠀⠀⠀⢀",
@@ -55,16 +54,10 @@ const ART_LINES: string[] = [
 ];
 const ART_W = Math.max(...ART_LINES.map((l) => visibleWidth(l)));
 
-// ── Rendu helpers ──
+// ── Rendu ──
 const RESET = "\x1b[0m";
-
-/** Vert truecolor interpolé entre #15803d (sombre) et #86efac (clair). */
-function lerpGreen(t: number): string {
-	const from = [21, 128, 61];
-	const to = [134, 239, 172];
-	const c = from.map((f, i) => Math.round(f + (to[i] - f) * t));
-	return `\x1b[38;2;${c[0]};${c[1]};${c[2]}m`;
-}
+const FLAT = "\x1b[1;32m"; // vert flat, identique au header logo
+const PAD = "  ";
 
 function padEndVis(s: string, w: number): string {
 	return s + " ".repeat(Math.max(0, w - visibleWidth(s)));
@@ -87,6 +80,26 @@ function relTime(d: Date): string {
 	if (j < 30) return `${Math.floor(j / 7)} sem`;
 	if (j < 365) return `${Math.floor(j / 30)} mois`;
 	return `${Math.floor(j / 365)} an`;
+}
+
+// ── Header logo pi (repris de l'ex-custom-header.ts) ──
+function buildHeaderLines(theme: Theme): string[] {
+	const GREEN = "\x1b[1;32m";
+	const lines = [
+		"   ███████████████████████████╗  ",
+		"   ╚══██████╔════════██████╔══╝  ",
+		"      ██████║        ██████║     ",
+		"      ██████║        ██████║     ",
+		"      ██████║        ██████║     ",
+		"      ██████║        ██████║     ",
+		"      ██████║        ██████║     ",
+		"      ██████║        ██████║     ",
+		"   ████████████╗  ████████████╗  ",
+		"   ╚═══════════╝  ╚═══════════╝  ",
+	].map((line) => `${GREEN}${line}${RESET}`);
+	lines.push("");
+	lines.push(theme.bold(theme.fg("accent", "pi")) + theme.fg("dim", ` v${VERSION}`));
+	return lines;
 }
 
 // ── Données ──
@@ -134,7 +147,12 @@ function getSwitch(ctx: HubContext): SwitchFn | undefined {
 // ── L'écran ──
 const MAX_VISIBLE = 12;
 const RECENT_COUNT = 10;
-const FRAME_MS = 125; // ~8 FPS : un fantôme flotte, il ne court pas
+
+interface ActionSpan {
+	x0: number;
+	x1: number;
+	run: () => void;
+}
 
 class HubScreen {
 	private level: "workspaces" | "sessions" = "workspaces";
@@ -142,12 +160,15 @@ class HubScreen {
 	private showAllWorkspaces = false;
 	private showAllSessions = false;
 	private selectList!: SelectList;
-	private timer: ReturnType<typeof setInterval> | null = null;
-	private frame = 0;
 	private tui!: { requestRender(): void };
 	private theme!: Theme;
 	private done!: (v: HubResult | null) => void;
-	private border!: DynamicBorder;
+	// Géométrie du dernier render (hit-test souris)
+	private bodyRow = -1;
+	private bodyHeight = 0;
+	private listX0 = 0;
+	private hintRow = -1;
+	private actionSpans: ActionSpan[] = [];
 
 	constructor(
 		private ctx: HubContext,
@@ -159,30 +180,22 @@ class HubScreen {
 		render: (width: number) => string[];
 		invalidate: () => void;
 		handleInput: (data: string) => void;
+		handleMouse?: (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
 	} {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
-		this.border = new DynamicBorder((s) => theme.fg("border", s));
 		this.rebuild();
-		// LAST RESORT: animation par frames — voir note d'en-tête.
-		this.timer = setInterval(() => {
-			this.frame++;
-			this.tui.requestRender();
-		}, FRAME_MS);
 
 		return {
 			render: (w) => this.render(w),
 			invalidate: () => this.selectList.invalidate(),
 			handleInput: (data) => this.handleInput(data),
+			handleMouse: (event) => this.handleMouse(event),
 		};
 	}
 
 	private finish(v: HubResult | null): void {
-		if (this.timer) {
-			clearInterval(this.timer);
-			this.timer = null;
-		}
 		this.done(v);
 	}
 
@@ -195,7 +208,6 @@ class HubScreen {
 	}
 
 	private buildItems(): SelectItem[] {
-		const t = this.t();
 		if (this.level === "workspaces") {
 			const sorted = this.showAllWorkspaces
 				? this.workspaces
@@ -212,7 +224,6 @@ class HubScreen {
 					description: `${this.workspaces.length} au total`,
 				});
 			}
-			void t;
 			return items;
 		}
 		// niveau sessions
@@ -284,21 +295,30 @@ class HubScreen {
 		this.finish(this.autoLaunched ? { action: "quit" } : null);
 	}
 
+	private triggerNew(): void {
+		const cwd = this.level === "sessions" ? this.workspaceCwd : this.selectedWorkspaceCwd();
+		if (cwd) this.finish({ action: "new", cwd });
+	}
+
+	private triggerRename(): void {
+		if (this.level !== "sessions") return;
+		const sel = this.selectList.getSelectedItem();
+		if (sel && String(sel.value).startsWith("sess:")) {
+			this.finish({ action: "rename", path: String(sel.value).slice(5), label: sel.label });
+		}
+	}
+
 	private handleInput(data: string): void {
 		if (matchesKey(data, "escape")) {
 			this.onEscape();
 			return;
 		}
 		if (matchesKey(data, "ctrl+n")) {
-			const cwd = this.level === "sessions" ? this.workspaceCwd : this.selectedWorkspaceCwd();
-			if (cwd) this.finish({ action: "new", cwd });
+			this.triggerNew();
 			return;
 		}
 		if (matchesKey(data, "ctrl+r") && this.level === "sessions") {
-			const sel = this.selectList.getSelectedItem();
-			if (sel && String(sel.value).startsWith("sess:")) {
-				this.finish({ action: "rename", path: String(sel.value).slice(5), label: sel.label });
-			}
+			this.triggerRename();
 			return;
 		}
 		this.selectList.handleInput(data);
@@ -312,6 +332,36 @@ class HubScreen {
 		return v.startsWith("ws:") ? v.slice(3) : this.workspaceCwd;
 	}
 
+	// ── Souris ──
+	private handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		// Options du bas
+		if (event.type === "click" && event.y === this.hintRow) {
+			const span = this.actionSpans.find((s) => event.x >= s.x0 && event.x < s.x1);
+			if (span) {
+				span.run();
+				return { handled: true };
+			}
+			return undefined;
+		}
+		// Zone liste : retarget vers le SelectList (coords locales à la liste)
+		if (
+			this.bodyRow >= 0 &&
+			event.y >= this.bodyRow &&
+			event.y < this.bodyRow + this.bodyHeight
+		) {
+			const shifted: TuiMouseEvent = {
+				...event,
+				x: event.x - this.listX0,
+				y: event.y - this.bodyRow,
+			};
+			this.selectList.handleMouse(shifted);
+			this.tui.requestRender();
+			return { handled: true };
+		}
+		return undefined;
+	}
+
+	// ── Rendu ──
 	private title(): string {
 		const t = this.t();
 		let title = t.fg("accent", t.bold("◈ session hub"));
@@ -327,32 +377,45 @@ class HubScreen {
 		const listW = Math.max(36, w - ART_W - 6);
 
 		const out: string[] = [];
-		out.push(...this.border.render(w));
-		out.push(this.title());
+		out.push("");
+		out.push(PAD + this.title());
+		out.push("");
 
-		const listLines = this.selectList.render(showArt ? listW : w - 2);
+		const listLines = this.selectList.render(showArt ? listW : w - PAD.length - 2);
+		this.bodyRow = out.length;
+		this.listX0 = PAD.length + (showArt ? ART_W + 3 : 0);
 		const bodyH = Math.max(showArt ? ART_LINES.length : 0, listLines.length);
+		this.bodyHeight = bodyH;
 		for (let y = 0; y < bodyH; y++) {
 			let line = "";
 			if (showArt) {
 				const raw = ART_LINES[y] ?? "";
-				// Shimmer : vague sinusoïdale verticale, amplitude douce.
-				const wave = 0.62 + 0.38 * Math.sin(this.frame * 0.32 + y * 0.52);
-				line += lerpGreen(wave) + raw + RESET;
+				line += FLAT + raw + RESET;
 				line += " ".repeat(ART_W - visibleWidth(raw) + 3);
 			}
 			line += listLines[y] ?? "";
-			out.push(line);
+			out.push(PAD + line);
 		}
 		out.push("");
-		out.push(
-			this.t().fg(
-				"dim",
-				"  ↑↓ navigate · enter select · ctrl+n new · ctrl+r rename · esc " +
-					(this.autoLaunched ? "quit" : "close"),
-			),
-		);
-		out.push(...this.border.render(w));
+
+		// Options du bas — cliquables (fullscreen) + raccourcis clavier
+		const t = this.t();
+		const actions: Array<{ label: string; hint: string; dimmed: boolean; run: () => void }> = [
+			{ label: "New", hint: "(ctrl+n)", dimmed: false, run: () => this.triggerNew() },
+			{ label: "Rename", hint: "(ctrl+r)", dimmed: this.level !== "sessions", run: () => this.triggerRename() },
+			{ label: "Quitter", hint: "(esc)", dimmed: false, run: () => this.onEscape() },
+		];
+		let hintLine = PAD;
+		const spans: ActionSpan[] = [];
+		for (const a of actions) {
+			const x0 = visibleWidth(hintLine);
+			const label = a.dimmed ? t.fg("dim", a.label) : t.fg("accent", t.bold(a.label));
+			hintLine += label + t.fg("dim", ` ${a.hint}`) + "      ";
+			spans.push({ x0, x1: visibleWidth(hintLine) - 6, run: a.run });
+		}
+		this.hintRow = out.length;
+		this.actionSpans = spans;
+		out.push(hintLine);
 		return out;
 	}
 }
@@ -444,10 +507,21 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (event, ctx) => {
-		if (event.reason !== "startup") return;
 		if (ctx.mode !== "tui" || !ctx.hasUI) return;
-		if (ctx.cwd !== homedir()) return; // décision : auto uniquement sur home
-		const result = await openHub(ctx, { autoLaunched: true });
-		await actOnResult(result, ctx);
+		const onHome = ctx.cwd === homedir();
+
+		if (onHome && event.reason === "startup") {
+			// Hub plein écran : header minimal.
+			ctx.ui.setHeader(() => ({ render: () => [""], invalidate() {} }));
+			const result = await openHub(ctx, { autoLaunched: true });
+			await actOnResult(result, ctx);
+			return;
+		}
+
+		// Session normale : header logo pi (rôle repris de custom-header.ts).
+		ctx.ui.setHeader((_tui, theme) => ({
+			render: () => buildHeaderLines(theme),
+			invalidate() {},
+		}));
 	});
 }
