@@ -1,37 +1,30 @@
 /**
  * Session Hub — écran d'accueil pi : workspaces & discussions, art braille.
  *
- * - Lancé depuis le home : le hub s'ouvre d'office (Esc = quitte pi avec
- *   clear du terminal). En session normale : header logo pi + version
+ * - Lancé depuis le home : le hub s'ouvre d'office avec un header minimal
+ *   (Esc = quitte pi). En session normale : header logo pi + version
  *   (session-hub absorbe l'ex-custom-header.ts).
- * - `/hub` : ouvre le hub · `/hub <path|id>` : reprendre direct ·
- *   `/hub --new <cwd>` : créer direct · Ctrl+H : ouvrir le hub partout.
+ * - `/hub` : ouvre le hub depuis n'importe quelle session
  * - Niveau 1 : les 10 derniers workspaces (par activité) + « tous »
- *   Options : Accueil · Root · Quitter
  * - Niveau 2 : les 10 dernières discussions du workspace + « toutes »
- *   Options : New · Rename (mode cible jaune → ↵ ou clic) · Retour
- * - Souris : liste et options cliquables — capture active en mode
+ * - Enter : reprendre · Ctrl+N : nouvelle session · Ctrl+R : renommer
+ *   Esc : retour arrière (ou quitte pi si auto-launch)
+ * - Souris : liste et options du bas cliquables — capture active en mode
  *   fullscreen (`tuiMode: "fullscreen"`) ; en regular, clavier seulement.
  */
 
-import type {
-	ExtensionAPI,
-	ExtensionCommandContext,
-	ExtensionContext,
-	Theme,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR_NAME, getAgentDir, SessionManager, VERSION } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { writeSync } from "node:fs";
 import { matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { SelectList, type SelectItem, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 
 // Type dérivé du runtime : aucune hypothèse sur l'export nommé de SessionInfo.
 type SessionInfo = Awaited<ReturnType<typeof SessionManager.listAll>>[number];
 
-// ── Art (braille, injecté par dev/tools/use-art.mjs) ──
+// ── Art (braille, généré depuis ghost-small.txt — tête de fille anime) ──
 const ART_LINES: string[] = [
 		"⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠗",
 		"⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠎",
@@ -68,18 +61,15 @@ const ART_W = Math.max(...ART_LINES.map((l) => visibleWidth(l)));
 const RESET = "\x1b[0m";
 const FLAT = "\x1b[1;32m"; // vert bold — art, sélection, libellés actifs
 const GREEN = "\x1b[32m"; // vert normal — logo header
-const YELLOW = "\x1b[1;33m"; // jaune bold — cible du mode renommage
 const PAD = "  ";
 
 // ── Calibrage chirurgical (itère avec Impre) ──
-// Robot+liste centrés horizontalement (bodyX0), offsets fins par niveau.
-const RACINE_OFFSET_X = 0; // décalage horizontal du bloc au niveau racine (cols)
-const SESSIONS_OFFSET_X = 0; // décalage horizontal du bloc au niveau discussions (cols)
+// ART_MARGIN_LEFT supprimé : robot+liste sont centrés horizontalement
+// automatiquement sur le milieu de l'écran (bodyX0).
 const LIST_DROP = 9; // décalage vertical : la liste commence sous le haut du robot
 const LIST_WIDTH = 30; // largeur de la colonne liste (labels seuls)
 const ACTION_GAP = 3; // espaces entre les options du bas
 const OPTIONS_OFFSET_X = 1; // micro-ajustement horizontal des options (cols, négatif = gauche)
-const ACTION_SOUND: string = ""; // chemin d'un .wav joué à chaque action du hub (vide = muet)
 
 function padEndVis(s: string, w: number): string {
 	return s + " ".repeat(Math.max(0, w - visibleWidth(s)));
@@ -90,26 +80,23 @@ function firstLine(s: string, max: number): string {
 	return line.length > max ? line.slice(0, max - 1) + "…" : line;
 }
 
-/** Joue un son de feedback (.wav via PowerShell) — silence si non configuré. */
-// LAST RESORT: le son se joue en fire-and-forget via un process externe,
-// aucun événement terminal n'existe pour la lecture audio.
-function playActionSound(): void {
-	if (!ACTION_SOUND) return;
-	try {
-		const safe = ACTION_SOUND.replace(/'/g, "''");
-		const child = spawn(
-			"powershell",
-			["-NoProfile", "-Command", `(New-Object Media.SoundPlayer '${safe}').Play()`],
-			{ detached: true, stdio: "ignore" },
-		);
-		child.unref();
-	} catch {
-		/* pas de son : jamais bloquant */
-	}
+function relTime(d: Date): string {
+	const sec = Math.max(0, (Date.now() - d.getTime()) / 1000);
+	if (sec < 60) return "à l'instant";
+	const min = sec / 60;
+	if (min < 60) return `${Math.floor(min)} min`;
+	const h = min / 60;
+	if (h < 24) return `${Math.floor(h)} h`;
+	const j = h / 24;
+	if (j < 7) return `${Math.floor(j)} j`;
+	if (j < 30) return `${Math.floor(j / 7)} sem`;
+	if (j < 365) return `${Math.floor(j / 30)} mois`;
+	return `${Math.floor(j / 365)} an`;
 }
 
 // ── Header logo pi (repris de l'ex-custom-header.ts) ──
 function buildHeaderLines(theme: Theme): string[] {
+	const GREEN = "\x1b[1;32m";
 	const lines = [
 		"   ███████████████████████████╗  ",
 		"   ╚══██████╔════════██████╔══╝  ",
@@ -121,7 +108,7 @@ function buildHeaderLines(theme: Theme): string[] {
 		"      ██████║        ██████║     ",
 		"   ████████████╗  ████████████╗  ",
 		"   ╚═══════════╝  ╚═══════════╝  ",
-	].map((line) => `${FLAT}${line}${RESET}`);
+	].map((line) => `${GREEN}${line}${RESET}`);
 	lines.push("");
 	lines.push(theme.bold(theme.fg("accent", "pi")) + theme.fg("dim", ` v${VERSION}`));
 	return lines;
@@ -160,8 +147,7 @@ interface HubResult {
 }
 
 // switchSession n'est typé que sur ExtensionCommandContext ; à l'exécution le
-// runtime peut l'exposer aussi sur le ctx des events. On check, sinon fallback
-// via /hub <path> (voir actOnResult).
+// runtime peut l'exposer aussi sur le ctx des events. On check, sinon fallback.
 type SwitchFn = ExtensionCommandContext["switchSession"];
 type HubContext = ExtensionContext & { switchSession?: SwitchFn };
 
@@ -174,12 +160,17 @@ function getSwitch(ctx: HubContext): SwitchFn | undefined {
 const MAX_VISIBLE = 12;
 const RECENT_COUNT = 10;
 
+interface ActionSpan {
+	x0: number;
+	x1: number;
+	run: () => void;
+}
+
 class HubScreen {
 	private level: "workspaces" | "sessions" = "workspaces";
 	private workspaceCwd: string | null = null;
 	private showAllWorkspaces = false;
 	private showAllSessions = false;
-	private pendingRename = false;
 	private selectList!: SelectList;
 	private tui!: { requestRender(): void; terminal: { rows: number } };
 	private theme!: Theme;
@@ -190,18 +181,13 @@ class HubScreen {
 	private bodyX0 = 0;
 	private listX0 = 0;
 	private hintRow = -1;
-	private actionSpans: Array<{ x0: number; x1: number; run: () => void }> = [];
+	private actionSpans: ActionSpan[] = [];
 
 	constructor(
 		private ctx: HubContext,
 		private workspaces: Workspace[],
-		openWorkspace?: string,
-	) {
-		if (openWorkspace) {
-			this.level = "sessions";
-			this.workspaceCwd = openWorkspace;
-		}
-	}
+		private autoLaunched: boolean,
+	) {}
 
 	bind(tui: { requestRender(): void; terminal: { rows: number } }, theme: Theme, done: (v: HubResult | null) => void): {
 		render: (width: number) => string[];
@@ -223,7 +209,6 @@ class HubScreen {
 	}
 
 	private finish(v: HubResult | null): void {
-		playActionSound();
 		this.done(v);
 	}
 
@@ -245,10 +230,15 @@ class HubScreen {
 				label: basename(w.cwd) || w.cwd,
 			}));
 			if (!this.showAllWorkspaces && this.workspaces.length > RECENT_COUNT) {
-				items.push({ value: "all-ws", label: "📂 Tous les workspaces…" });
+				items.push({
+					value: "all-ws",
+					label: "📂 Tous les workspaces…",
+					description: `${this.workspaces.length} au total`,
+				});
 			}
 			return items;
 		}
+		// niveau sessions
 		const sessions = this.currentSessions();
 		const sorted = this.showAllSessions ? sessions : sessions.slice(0, RECENT_COUNT);
 		const items: SelectItem[] = sorted.map((s) => ({
@@ -256,7 +246,11 @@ class HubScreen {
 			label: s.name || firstLine(s.firstMessage, 44) || "(session vide)",
 		}));
 		if (!this.showAllSessions && sessions.length > RECENT_COUNT) {
-			items.push({ value: "all-sess", label: "📜 Tout afficher…" });
+			items.push({
+				value: "all-sess",
+				label: "📜 Tout afficher…",
+				description: `${sessions.length} au total`,
+			});
 		}
 		return items;
 	}
@@ -264,15 +258,12 @@ class HubScreen {
 	private rebuild(): void {
 		const t = this.t();
 		const items = this.buildItems();
-		// En mode renommage, la cible (sélection) passe en jaune.
-		const sel = (s: string): string =>
-			this.pendingRename ? YELLOW + s + RESET : t.fg("accent", s);
 		this.selectList = new SelectList(
 			items,
 			Math.min(items.length, MAX_VISIBLE),
 			{
-				selectedPrefix: (s) => sel(s),
-				selectedText: (s) => sel(s),
+				selectedPrefix: (s) => t.fg("accent", s),
+				selectedText: (s) => t.fg("accent", s),
 				description: (s) => t.fg("muted", s),
 				scrollInfo: (s) => t.fg("dim", s),
 				noMatch: (s) => t.fg("warning", s),
@@ -283,11 +274,6 @@ class HubScreen {
 	}
 
 	private pick(value: string): void {
-		// En mode renommage, les clics confirment la cible au lieu d'ouvrir.
-		if (this.pendingRename) {
-			this.confirmRename();
-			return;
-		}
 		if (value.startsWith("ws:")) {
 			this.level = "sessions";
 			this.workspaceCwd = value.slice(3);
@@ -308,13 +294,6 @@ class HubScreen {
 	}
 
 	private onEscape(): void {
-		// Mode renommage : Esc annule le mode d'abord.
-		if (this.pendingRename) {
-			this.pendingRename = false;
-			this.rebuild();
-			this.tui.requestRender();
-			return;
-		}
 		if (this.level === "sessions") {
 			this.level = "workspaces";
 			this.workspaceCwd = null;
@@ -323,8 +302,8 @@ class HubScreen {
 			this.tui.requestRender();
 			return;
 		}
-		// Niveau 1 : Esc ferme le hub. Quitter pi = bouton Quitter.
-		this.finish(null);
+		// Niveau 1 : si auto-launch, Esc = sortie de pi (décision design).
+		this.finish(this.autoLaunched ? { action: "quit" } : null);
 	}
 
 	private triggerNew(): void {
@@ -333,45 +312,25 @@ class HubScreen {
 		if (cwd) this.finish({ action: "new", cwd });
 	}
 
-	private enterRenameMode(): void {
-		if (this.level !== "sessions" || this.pendingRename) return;
-		this.pendingRename = true;
-		this.rebuild();
-		this.tui.requestRender();
-	}
-
-	private cancelRenameMode(): void {
-		if (!this.pendingRename) return;
-		this.pendingRename = false;
-		this.rebuild();
-		this.tui.requestRender();
-	}
-
-	private confirmRename(): void {
-		if (this.level !== "sessions" || !this.pendingRename) return;
-		const sel = this.selectList.getSelectedItem();
-		if (!sel || !String(sel.value).startsWith("sess:")) return;
-		const path = String(sel.value).slice(5);
-		const ws = this.workspaces.find((w) => w.sessions.some((x) => x.path === path));
-		this.finish({ action: "rename", path, label: sel.label, cwd: ws?.cwd });
-	}
-
 	private triggerHome(): void {
-		if (this.level !== "workspaces") return;
 		this.finish({ action: "home" });
 	}
 
-	private triggerRoot(): void {
-		if (this.level !== "workspaces") return;
-		try {
-			const child = spawn("explorer.exe", [getAgentDir()], {
-				detached: true,
-				stdio: "ignore",
-			});
-			child.unref();
-			this.t().fg("dim", ""); // no-op : garde la référence thème stable
-		} catch {
-			/* pas de blocage si l'explorateur échoue */
+	private triggerDossier(): void {
+		// Ouvre l'explorateur sur ~/.pi/agent — le hub reste ouvert.
+		const child = spawn("explorer.exe", [getAgentDir()], {
+			detached: true,
+			stdio: "ignore",
+		});
+		child.unref();
+		this.tui.requestRender();
+	}
+
+	private triggerRename(): void {
+		if (this.level !== "sessions") return;
+		const sel = this.selectList.getSelectedItem();
+		if (sel && String(sel.value).startsWith("sess:")) {
+			this.finish({ action: "rename", path: String(sel.value).slice(5), label: sel.label });
 		}
 	}
 
@@ -380,18 +339,13 @@ class HubScreen {
 			this.onEscape();
 			return;
 		}
-		// Mode renommage : Enter (ou clic) confirme la cible jaune.
-		if (this.pendingRename && (data === "\r" || data === "\n")) {
-			this.confirmRename();
-			return;
-		}
 		if (this.level === "workspaces") {
 			if (matchesKey(data, "ctrl+a")) {
 				this.triggerHome();
 				return;
 			}
 			if (matchesKey(data, "ctrl+d")) {
-				this.triggerRoot();
+				this.triggerDossier();
 				return;
 			}
 		} else {
@@ -400,7 +354,7 @@ class HubScreen {
 				return;
 			}
 			if (matchesKey(data, "ctrl+r")) {
-				this.enterRenameMode();
+				this.triggerRename();
 				return;
 			}
 		}
@@ -409,7 +363,10 @@ class HubScreen {
 	}
 
 	private selectedWorkspaceCwd(): string | null {
-		return this.workspaceCwd;
+		const sel = this.selectList.getSelectedItem();
+		if (!sel) return null;
+		const v = String(sel.value);
+		return v.startsWith("ws:") ? v.slice(3) : this.workspaceCwd;
 	}
 
 	// ── Souris ──
@@ -423,13 +380,12 @@ class HubScreen {
 			}
 			return undefined;
 		}
-		// Mode renommage : un clic dans la liste confirme la cible jaune.
-		if (this.pendingRename && event.type === "click" && this.inList(event)) {
-			this.confirmRename();
-			return { handled: true };
-		}
 		// Zone liste : retarget vers le SelectList (coords locales à la liste)
-		if (this.inList(event)) {
+		if (
+			this.bodyRow >= 0 &&
+			event.y >= this.bodyRow &&
+			event.y < this.bodyRow + this.bodyHeight
+		) {
 			const shifted: TuiMouseEvent = {
 				...event,
 				x: event.x - this.listX0,
@@ -442,30 +398,21 @@ class HubScreen {
 		return undefined;
 	}
 
-	private inList(event: TuiMouseEvent): boolean {
-		return (
-			this.bodyRow >= 0 &&
-			event.y >= this.bodyRow + LIST_DROP &&
-			event.y < this.bodyRow + this.bodyHeight
-		);
-	}
-
 	// ── Rendu ──
 	private render(width: number): string[] {
 		const w = Math.min(width, 110); // width = 100% du terminal (overlay)
 		const showArt = w >= ART_W + 6 + LIST_WIDTH;
 		const listW = Math.min(LIST_WIDTH, Math.max(20, w - 4 - (showArt ? ART_W + 3 : 0)));
 		const rows = this.tui.terminal.rows || 24;
-		const offsetX = this.level === "workspaces" ? RACINE_OFFSET_X : SESSIONS_OFFSET_X;
 
 		const out: string[] = [];
 		out.push("");
 
-		// Body centré horizontalement : robot (gauche) + liste (droite, descendue)
+		// Body centré horizontalement : robot (gauche) + liste (droite),
+		// la liste descendue de LIST_DROP lignes par rapport au haut du robot
 		const gap = 4; // pair => bodyW pair => centrage à la demi-cellule près
 		const bodyW = (showArt ? ART_W + gap : 0) + listW;
-		const bodyX0 =
-			Math.max(0, Math.round((w - bodyW) / 2)) + offsetX;
+		const bodyX0 = Math.max(0, Math.round((w - bodyW) / 2));
 		const listLines = [
 			...Array(LIST_DROP).fill(""),
 			...this.selectList.render(listW),
@@ -480,46 +427,39 @@ class HubScreen {
 			if (showArt) {
 				const raw = ART_LINES[y] ?? "";
 				line += FLAT + raw + RESET;
-				line += " ".repeat(ART_W - visibleWidth(raw) + gap);
+				line += " ".repeat(ART_W - visibleWidth(raw) + 3);
 			}
 			line += listLines[y] ?? "";
 			out.push(line);
 		}
 
-		// Pousser les options juste au-dessus de la chatbox pi.
+		// Pousser les options juste au-dessus de la chatbox pi : l'overlay
+		// démarre à row = margin.top (1) ; la chatbox occupe ~4 lignes en bas.
 		const CHATBOX_H = 4; // ajustable après test visuel
 		const filler = Math.max(1, rows - CHATBOX_H - out.length - 1);
 		for (let i = 0; i < filler; i++) out.push("");
 
-		// Options du bas, centrées sur l'axe du body — cliquables (fullscreen)
+		// Options du bas, centrées — cliquables (fullscreen) + raccourcis clavier
 		const t = this.t();
-		let actions: Array<{ label: string; hint: string; yellow?: boolean; run: () => void }>;
-		if (this.level === "workspaces") {
-			actions = [
-				{ label: "Accueil", hint: "(ctrl+a)", run: () => this.triggerHome() },
-				{ label: "Root", hint: "(ctrl+d)", run: () => this.triggerRoot() },
-				{ label: "Quitter", hint: "", run: () => this.onEscape() },
-			];
-		} else if (this.pendingRename) {
-			actions = [
-				{ label: "New", hint: "(ctrl+n)", run: () => this.triggerNew() },
-				{ label: "Confirmer", hint: "(↵ ou clic)", yellow: true, run: () => this.confirmRename() },
-				{ label: "Annuler", hint: "(esc)", run: () => this.cancelRenameMode() },
-			];
-		} else {
-			actions = [
-				{ label: "New", hint: "(ctrl+n)", run: () => this.triggerNew() },
-				{ label: "Rename", hint: "(ctrl+r)", run: () => this.enterRenameMode() },
-				{ label: "Retour", hint: "(esc)", run: () => this.onEscape() },
-			];
-		}
+		const actions: Array<{ label: string; hint: string; run: () => void }> =
+			this.level === "workspaces"
+				? [
+						{ label: "Accueil", hint: "(ctrl+a)", run: () => this.triggerHome() },
+						{ label: "Dossier", hint: "(ctrl+d)", run: () => this.triggerDossier() },
+						{ label: "Quitter", hint: "(esc)", run: () => this.onEscape() },
+					]
+				: [
+						{ label: "New", hint: "(ctrl+n)", run: () => this.triggerNew() },
+						{ label: "Rename", hint: "(ctrl+r)", run: () => this.triggerRename() },
+						{ label: "Retour", hint: "(esc)", run: () => this.onEscape() },
+					];
 		let hint = "";
 		const spans: Array<{ x0: number; x1: number; run: () => void }> = [];
 		for (const a of actions) {
 			if (hint) hint += " ".repeat(ACTION_GAP);
 			const x0 = visibleWidth(hint);
-			hint += (a.yellow ? YELLOW + t.bold(a.label) : t.fg("accent", t.bold(a.label))) + RESET;
-			if (a.hint) hint += t.fg("dim", ` ${a.hint}`) + RESET;
+			hint += t.fg("accent", t.bold(a.label)) + RESET;
+			hint += t.fg("dim", ` ${a.hint}`) + RESET;
 			spans.push({ x0, x1: visibleWidth(hint), run: a.run });
 		}
 		// Options centrées sur l'axe du body (même centre que robot+liste)
@@ -536,28 +476,20 @@ class HubScreen {
 
 // ── Ouverture du hub & actions ──
 
-let hubOpen = false; // garde anti-réouverture (shortcut pendant que le hub est ouvert)
-
-async function openHub(ctx: HubContext, opts: { openWorkspace?: string } = {}): Promise<HubResult | null> {
-	if (hubOpen) return null;
+async function openHub(ctx: HubContext, opts: { autoLaunched: boolean }): Promise<HubResult | null> {
 	const workspaces = await collectWorkspaces();
 	if (workspaces.length === 0) {
 		ctx.ui.notify("Aucune session trouvée", "info");
 		return null;
 	}
-	const screen = new HubScreen(ctx, workspaces, opts.openWorkspace);
-	hubOpen = true;
-	try {
-		return await ctx.ui.custom<HubResult | null>(
-			(tui, theme, _kb, done) => screen.bind(tui, theme, done),
-			{
-				overlay: true,
-				overlayOptions: { anchor: "top-center", width: "100%", margin: { top: 1 } },
-			},
-		);
-	} finally {
-		hubOpen = false;
-	}
+	const screen = new HubScreen(ctx, workspaces, opts.autoLaunched);
+	return ctx.ui.custom<HubResult | null>(
+		(tui, theme, _kb, done) => screen.bind(tui, theme, done),
+		{
+			overlay: true,
+			overlayOptions: { anchor: "top-center", width: "100%", margin: { top: 1 } },
+		},
+	);
 }
 
 async function actOnResult(result: HubResult | null, ctx: HubContext): Promise<void> {
@@ -565,7 +497,7 @@ async function actOnResult(result: HubResult | null, ctx: HubContext): Promise<v
 
 	if (result.action === "quit") {
 		// Clear ANSI : écran + scrollback + curseur en haut, puis sortie.
-		writeSync(1, "\x1b[2J\x1b[3J\x1b[H");
+		process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
 		ctx.shutdown();
 		return;
 	}
@@ -587,54 +519,60 @@ async function actOnResult(result: HubResult | null, ctx: HubContext): Promise<v
 				ctx.ui.notify(`Échec du renommage : ${e instanceof Error ? e.message : String(e)}`, "error");
 			}
 		}
-		// Retour au hub, directement dans le workspace de la discussion.
-		const again = await openHub(ctx, { openWorkspace: result.cwd });
+		const again = await openHub(ctx, { autoLaunched: false });
 		await actOnResult(again, ctx);
 		return;
 	}
 
-	// switch / new : nécessitent un ctx command — garanti : le hub n'est
-	// ouvert que depuis la commande /hub ou le shortcut Ctrl+H.
+	// switch / new : nécessitent un ctx command. Depuis un ctx d'event,
+	// fallback : on préremplit /hub avec l'action exacte — un Enter suffit.
 	const sw = getSwitch(ctx);
-	if (!sw) {
-		ctx.ui.notify("Action impossible ici — tape /hub", "warning");
+	if (sw) {
+		if (result.action === "switch" && result.path) {
+			const label = result.label ?? "";
+			await sw(result.path, {
+				withSession: async (c) => {
+					c.ui.notify(`Reprise : ${label}`, "info");
+				},
+			});
+			return;
+		}
+		if (result.action === "new" && result.cwd) {
+			const cwd = result.cwd;
+			const sm = SessionManager.create(cwd);
+			const file = sm.getSessionFile();
+			if (!file) {
+				ctx.ui.notify("Création de session impossible", "error");
+				return;
+			}
+			await sw(file, {
+				withSession: async (c) => {
+					c.ui.notify(
+						`Nouvelle session dans ${basename(cwd)} — /name pour la nommer`,
+						"info",
+					);
+				},
+			});
+			return;
+		}
 		return;
 	}
 
 	if (result.action === "switch" && result.path) {
-		const label = result.label ?? "";
-		await sw(result.path, {
-			withSession: async (c) => {
-				c.ui.notify(`Reprise : ${label}`, "info");
-			},
-		});
+		ctx.ui.setEditorText(`/hub ${result.path}`);
+		ctx.ui.notify("Appuie ↵ pour reprendre la discussion", "info");
 		return;
 	}
-
 	if (result.action === "new" && result.cwd) {
-		const cwd = result.cwd;
-		const sm = SessionManager.create(cwd);
-		const file = sm.getSessionFile();
-		if (!file) {
-			ctx.ui.notify("Création de session impossible", "error");
-			return;
-		}
-		await sw(file, {
-			withSession: async (c) => {
-				c.ui.notify(
-					`Nouvelle session dans ${basename(cwd)} — /name pour la nommer`,
-					"info",
-				);
-			},
-		});
+		ctx.ui.setEditorText(`/hub --new ${result.cwd}`);
+		ctx.ui.notify("Appuie ↵ pour créer la session", "info");
 		return;
 	}
 }
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("hub", {
-		description:
-			"Session hub — workspaces & discussions (/hub <path|id> reprendre, /hub --new <cwd> créer)",
+		description: "Session hub — workspaces & discussions (/hub <path> pour reprendre, /hub --new <cwd> pour créer)",
 		handler: async (args, ctx) => {
 			if (ctx.mode !== "tui" || !ctx.hasUI) {
 				ctx.ui.notify("Session hub : mode TUI uniquement", "warning");
@@ -646,9 +584,9 @@ export default function (pi: ExtensionAPI) {
 			if (trimmed.startsWith("--new ")) {
 				const cwd = trimmed.slice(6).trim();
 				if (cwd) {
+					const sw = getSwitch(ctx);
 					const sm = SessionManager.create(cwd);
 					const file = sm.getSessionFile();
-					const sw = getSwitch(ctx);
 					if (sw && file) {
 						await sw(file, {
 							withSession: async (c) => {
@@ -657,9 +595,6 @@ export default function (pi: ExtensionAPI) {
 						});
 						return;
 					}
-					ctx.ui.setEditorText(`/hub --new ${cwd}`);
-					ctx.ui.notify("Appuie ↵ pour créer la session", "info");
-					return;
 				}
 			}
 
@@ -680,31 +615,10 @@ export default function (pi: ExtensionAPI) {
 						});
 						return;
 					}
-					ctx.ui.setEditorText(`/hub ${match.path}`);
-					ctx.ui.notify("Appuie ↵ pour reprendre la discussion", "info");
-					return;
 				}
-				ctx.ui.notify(`Session introuvable : ${trimmed}`, "warning");
-				return;
 			}
 
-			const result = await openHub(ctx);
-			await actOnResult(result, ctx);
-		},
-	});
-
-	// Ctrl+H : ouvrir le hub depuis n'importe où (discussions, accueil natif)
-	pi.registerShortcut("ctrl+h", {
-		description: "Session hub — workspaces & discussions",
-		handler: async (ctx) => {
-			if (ctx.mode !== "tui" || !ctx.hasUI) return;
-			// Garde : sans pouvoir de switch (ctx non-command), on passe par /hub.
-			if (!getSwitch(ctx)) {
-				ctx.ui.setEditorText("/hub");
-				ctx.ui.notify("↵ pour ouvrir le session hub", "info");
-				return;
-			}
-			const result = await openHub(ctx);
+			const result = await openHub(ctx, { autoLaunched: false });
 			await actOnResult(result, ctx);
 		},
 	});
@@ -714,11 +628,10 @@ export default function (pi: ExtensionAPI) {
 		const onHome = ctx.cwd === homedir();
 
 		if (onHome && event.reason === "startup") {
-			// Header minimal + /hub prérempli : un Enter ouvre le hub via le
-			// ctx commande (le seul ayant le pouvoir de switcher — zéro cascade).
+			// Hub plein écran : header minimal.
 			ctx.ui.setHeader(() => ({ render: () => [""], invalidate() {} }));
-			ctx.ui.setEditorText("/hub");
-			ctx.ui.notify("↵ pour ouvrir le session hub", "info");
+			const result = await openHub(ctx, { autoLaunched: true });
+			await actOnResult(result, ctx);
 			return;
 		}
 
