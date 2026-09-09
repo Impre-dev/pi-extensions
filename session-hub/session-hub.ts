@@ -80,7 +80,8 @@ const SESSIONS_OFFSET_X = 0; // décalage horizontal du bloc au niveau discussio
 const LIST_DROP = 9; // décalage vertical : la liste commence sous le haut du robot
 const LIST_WIDTH = 30; // largeur de la colonne liste (labels seuls)
 const ACTION_GAP = 3; // espaces entre les options du bas
-const OPTIONS_OFFSET_X = 1; // micro-ajustement horizontal des options (cols, négatif = gauche)
+const RACINE_ACTIONS_OFFSET_X = 1; // options du bas, niveau racine (cols, négatif = gauche) — calibré
+const SESSIONS_ACTIONS_OFFSET_X = 0; // options du bas, niveau discussions (à tuner)
 const ACTION_SOUND: string = ""; // chemin d'un .wav joué à chaque action du hub (vide = muet)
 
 function diagLog(msg: string): void {
@@ -527,9 +528,11 @@ class HubScreen {
 			spans.push({ x0, x1: visibleWidth(hint), run: a.run });
 		}
 		// Options centrées sur l'axe du body (même centre que robot+liste)
+		const actionsOffsetX =
+			this.level === "workspaces" ? RACINE_ACTIONS_OFFSET_X : SESSIONS_ACTIONS_OFFSET_X;
 		const padL = Math.max(
 			0,
-			Math.round(bodyX0 + bodyW / 2 - visibleWidth(hint) / 2) + OPTIONS_OFFSET_X,
+			Math.round(bodyX0 + bodyW / 2 - visibleWidth(hint) / 2) + actionsOffsetX,
 		);
 		this.hintRow = out.length;
 		this.actionSpans = spans.map((s) => ({ x0: s.x0 + padL, x1: s.x1 + padL, run: s.run }));
