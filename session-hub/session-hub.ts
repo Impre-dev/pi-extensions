@@ -334,12 +334,8 @@ class HubScreen {
 			this.tui.requestRender();
 			return;
 		}
-		// Niveau 1 : sur home, Esc = quit pi (décision design d'Impre).
-		if (this.ctx.cwd === homedir()) {
-			this.finish({ action: "quit" });
-			return;
-		}
-		this.finish(null);
+		// Niveau 1 : Esc = quit pi, où que le hub soit ouvert (comme le bouton).
+		this.finish({ action: "quit" });
 	}
 
 	private triggerNew(): void {
