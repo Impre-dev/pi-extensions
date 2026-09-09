@@ -1,6 +1,6 @@
 # Roadmap SessionHub
 
-> Document de pilotage — statut au 08/09. Extension pi : écran d'accueil
+> Document de pilotage — statut au 09/09. Extension pi : écran d'accueil
 > workspaces & discussions avec art braille (tête anime, vert flat).
 > Source de dev : `test_pi/session-hub/` — install : `~/.pi/agent/extensions/session-hub.ts`.
 
@@ -8,11 +8,16 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
-| v0.4 | Robot braille (401×443 dots, 28 lignes) remplace la tête anime. `use-art.mjs` : autocrop bounding box (AUTOCROP=1 par défaut), chemins fixés, assets originaux archivés dans `dev/` (robot-original, robot-v2, ghost) — rollback d'art en une commande. v2 du robot testée puis écartée | 9db606a |
+| v0.12 | Esc à la racine = quit pi PARTOUT (lancement home OU ctrl+h depuis une session) — le dernier cheveu du centrage UX. Esc dans les discussions = retour, inchangé. | 929b9e4 |
 | v0.11 | QUITTER DÉTERMINISTE : le bug — le bouton Quitter appelait onEscape (fermait le hub sans quitter), le process.exit n'était jamais atteint. Fix : le bouton déclenche action:quit → writeSync(clear) + process.exit(0) (shutdown deferred avalé pendant le startup — doc ne couvre pas le cas). Esc racine sur home = quit pi aussi. | 081bfad |
 | v0.10.1 | OPTIONS_OFFSET_X scindé en `RACINE_ACTIONS_OFFSET_X` (=1, calibré) / `SESSIONS_ACTIONS_OFFSET_X` (=0, validé par Impre) — centrage fin des options du bas indépendant par niveau. Autres constantes chirurgical conservées. | ac98414 |
 | v0.10 | RÉGRESSION RÉSOLUE : le switch direct fonctionne du premier coup. Coeur : `pi.sendUserMessage(`/hub <id>`, { deliverAs: "followUp", expandPromptTemplates: true })` — pi exécute la commande /hub avec un ctx command (le pouvoir). Réécriture complète du fichier (base v0.8.1 + robot v0.4 + nouveau coeur), validée en TUI par Impre. Leçon 10 violée puis actée : la généalogie n'importe pas, la validation TUI fait la base saine. | e495726 |
+| v0.9 | Design final du lancement (bouton power) : session_start home = header minimal + champ prérempli `/hub` + notify — le ctx event n'a pas le pouvoir de switch (prouvé par diagnostic), un Enter ouvre le hub via le ctx commande → tout switch direct ensuite. Screenshot validé par Impre. Leçon 11 actée. | 2d03d8d |
 | v0.8 | Architecture zéro-cascade : le hub ne s'ouvre plus jamais depuis un ctx event — au lancement home : /hub prérempli (un Enter), ouvert ensuite via le ctx commande (seul ayant le pouvoir de switcher). Ctrl+H : ouvre le hub partout (garde getSwitch). Options contextuelles : racine = Accueil (header natif) / Root (explorateur ~/.pi/agent) / Quitter (clear ANSI writeSync) ; discussions = New / Rename (mode cible jaune : ctrl+r ou clic, ↵ ou clic confirme) / Retour. Rename : retour au hub directement dans le workspace de la discussion. ACTION_SOUND : stub sons (.wav PowerShell). | f46d653 |
+| v0.7 | `/hub <path\|id>` : reprendre directement ; `/hub --new <cwd>` : créer. Fallback session_start : préremplit l'action exacte (un Enter suffit). Options par niveau : racine = Accueil (ctrl+a, header natif) / Dossier (ctrl+d, explorateur ~/.pi/agent) / Quitter (clear ANSI avant shutdown) ; discussions = New/Rename/Retour. | eefea7a |
+| v0.6 | Centrage horizontal : body (robot+liste) centré sur le milieu de l'écran (bodyX0 calculé), options sur le même axe (fini le calcul séparé), gap fantôme après « Quitter » retiré du calcul, `OPTIONS_OFFSET_X` = 1 (micro-ajustement mesuré, grille AHL round 4). `ART_MARGIN_LEFT` supprimé (centrage auto). | 2d87a9f |
+| v0.5 | Composition verticale épurée : descriptions retirées (labels seuls). LIST_DROP : la liste commence 9 lignes sous le robot (le « margin top » initial implémenté pour de vrai), robot 100 dots pleine résolution. Souris : hit-test ajusté au LIST_DROP. Validé (screenshots + grille AHL). | c63f862 |
+| v0.4 | Robot braille (401×443 dots, 28 lignes) remplace la tête anime. `use-art.mjs` : autocrop bounding box (AUTOCROP=1 par défaut), chemins fixés, assets originaux archivés dans `dev/` (robot-original, robot-v2, ghost) — rollback d'art en une commande. v2 du robot testée puis écartée | 9db606a |
 | v0.3 | Mode overlay (`anchor: "top-center"`) : hub flottant en haut de fenêtre. Inversion art/liste testée puis annulée (art à gauche). Tout-vert testé puis annulé (couleurs thème). Titre « Session hub » viré. Options centrées flottant au-dessus de la chatbox (`CHATBOX_H`). Outil `use-art.mjs` : changement d'art en une commande | ba954af |
 | v0.2 | Cosmétique : art statique vert flat, zéro bordure, padding. Fusion header : session-hub absorbe custom-header.ts (logo pi en session normale, header minimal sur home, custom-header retiré de l'install — backup `custom-header/`). Souris : `handleMouse` (liste + molette + options du bas cliquables, actif fullscreen), libellés New/Rename/Quitter | `59b5356` |
 | v0.1 | Écran d'accueil hub : `/hub` + auto-launch sur home, navigation 2 niveaux (workspaces → discussions), Enter/Ctrl+N/Ctrl+R/Esc, art braille vert flat + shimmer 8 FPS. Validé en TUI par Impre (retours → file v0.2) | `8915832` |
