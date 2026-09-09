@@ -1,3 +1,6 @@
 node_modules/
 *.log
 *.tsbuildinfo
+
+# Cahier de session (rule memory.md) — court terme, jamais commité
+cahier.md
