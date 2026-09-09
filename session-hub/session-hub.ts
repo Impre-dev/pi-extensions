@@ -334,7 +334,11 @@ class HubScreen {
 			this.tui.requestRender();
 			return;
 		}
-		// Niveau 1 : Esc ferme le hub. Quitter pi = bouton Quitter.
+		// Niveau 1 : sur home, Esc = quit pi (décision design d'Impre).
+		if (this.ctx.cwd === homedir()) {
+			this.finish({ action: "quit" });
+			return;
+		}
 		this.finish(null);
 	}
 
@@ -503,7 +507,7 @@ class HubScreen {
 			actions = [
 				{ label: "Accueil", hint: "(ctrl+a)", run: () => this.triggerHome() },
 				{ label: "Root", hint: "(ctrl+d)", run: () => this.triggerRoot() },
-				{ label: "Quitter", hint: "(esc)", run: () => this.onEscape() },
+				{ label: "Quitter", hint: "(esc)", run: () => this.finish({ action: "quit" }) },
 			];
 		} else if (this.pendingRename) {
 			actions = [
@@ -575,10 +579,12 @@ async function actOnResult(
 	if (!result) return;
 
 	if (result.action === "quit") {
-		// Clear ANSI : écran + scrollback + curseur en haut, puis sortie.
+		// Clear ANSI + exit direct. LAST RESORT: ctx.shutdown() est deferred
+		// "until idle" et avalé pendant le startup (testé : Quitter depuis le
+		// hub au lancement ne quitte pas). Les sessions sont déjà persistées
+		// (JSONL append-only) — exit déterministe et sans perte.
 		writeSync(1, "\x1b[2J\x1b[3J\x1b[H");
-		ctx.shutdown();
-		return;
+		process.exit(0);
 	}
 
 	if (result.action === "home") {
