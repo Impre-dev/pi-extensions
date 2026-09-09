@@ -59,9 +59,14 @@ const ART_W = Math.max(...ART_LINES.map((l) => visibleWidth(l)));
 // ── Rendu ──
 const RESET = "\x1b[0m";
 const FLAT = "\x1b[1;32m"; // vert bold — art, sélection, libellés actifs
-const GREEN = "\x1b[32m"; // vert normal — texte de liste
-const DIM_GREEN = "\x1b[2;32m"; // vert discret — descriptions, hints
+const GREEN = "\x1b[32m"; // vert normal — logo header
 const PAD = "  ";
+
+// ── Calibrage chirurgical (itère avec Impre) ──
+const ART_MARGIN_LEFT = 12; // marge gauche du robot (cols)
+const LIST_DROP = 9; // décalage vertical : la liste commence sous le haut du robot
+const LIST_WIDTH = 30; // largeur de la colonne liste (labels seuls)
+const ACTION_GAP = 3; // espaces entre les options du bas
 
 function padEndVis(s: string, w: number): string {
 	return s + " ".repeat(Math.max(0, w - visibleWidth(s)));
@@ -219,7 +224,6 @@ class HubScreen {
 			const items: SelectItem[] = sorted.map((w) => ({
 				value: `ws:${w.cwd}`,
 				label: basename(w.cwd) || w.cwd,
-				description: `${w.sessions.length} session${w.sessions.length > 1 ? "s" : ""} · ${relTime(w.sessions[0].modified)}`,
 			}));
 			if (!this.showAllWorkspaces && this.workspaces.length > RECENT_COUNT) {
 				items.push({
@@ -236,7 +240,6 @@ class HubScreen {
 		const items: SelectItem[] = sorted.map((s) => ({
 			value: `sess:${s.path}`,
 			label: s.name || firstLine(s.firstMessage, 44) || "(session vide)",
-			description: `${relTime(s.modified)} · ${s.messageCount} msg`,
 		}));
 		if (!this.showAllSessions && sessions.length > RECENT_COUNT) {
 			items.push({
@@ -356,7 +359,7 @@ class HubScreen {
 			const shifted: TuiMouseEvent = {
 				...event,
 				x: event.x - this.listX0,
-				y: event.y - this.bodyRow,
+				y: event.y - this.bodyRow - LIST_DROP,
 			};
 			this.selectList.handleMouse(shifted);
 			this.tui.requestRender();
@@ -367,18 +370,22 @@ class HubScreen {
 
 	// ── Rendu ──
 	private render(width: number): string[] {
-		const w = Math.min(width, 110);
-		const showArt = w >= ART_W + 44;
-		const listW = Math.max(36, w - ART_W - 6);
+		const w = Math.min(width, 110); // width = 100% du terminal (overlay)
+		const showArt = w >= ART_W + ART_MARGIN_LEFT + LIST_WIDTH + 6;
+		const listW = Math.min(LIST_WIDTH, Math.max(20, w - PAD.length - 2 - (showArt ? ART_MARGIN_LEFT + ART_W + 3 : 0)));
 		const rows = this.tui.terminal.rows || 24;
 
 		const out: string[] = [];
 		out.push("");
 
-		// Art à gauche (vert flat), liste à droite
-		const listLines = this.selectList.render(showArt ? listW : w - PAD.length - 2);
+		// Art à gauche (vert flat, décollé du bord), liste à droite,
+		// descendue de LIST_DROP lignes par rapport au haut du robot
+		const listLines = [
+			...Array(LIST_DROP).fill(""),
+			...this.selectList.render(showArt ? listW : w - PAD.length - 2),
+		];
 		this.bodyRow = out.length;
-		this.listX0 = PAD.length + (showArt ? ART_W + 3 : 0);
+		this.listX0 = PAD.length + (showArt ? ART_MARGIN_LEFT + ART_W + 3 : 0);
 		const bodyH = Math.max(showArt ? ART_LINES.length : 0, listLines.length);
 		this.bodyHeight = bodyH;
 		for (let y = 0; y < bodyH; y++) {
@@ -410,8 +417,8 @@ class HubScreen {
 		for (const a of actions) {
 			const x0 = visibleWidth(hint);
 			hint += (a.dimmed ? t.fg("dim", a.label) : t.fg("accent", t.bold(a.label))) + RESET;
-			hint += t.fg("dim", ` ${a.hint}`) + RESET + "      ";
-			spans.push({ x0, x1: visibleWidth(hint) - 6, run: a.run });
+			hint += t.fg("dim", ` ${a.hint}`) + RESET + " ".repeat(ACTION_GAP);
+			spans.push({ x0, x1: visibleWidth(hint) - ACTION_GAP, run: a.run });
 		}
 		const padL = Math.max(0, Math.floor((w - visibleWidth(hint)) / 2));
 		this.hintRow = out.length;
@@ -434,7 +441,7 @@ async function openHub(ctx: HubContext, opts: { autoLaunched: boolean }): Promis
 		(tui, theme, _kb, done) => screen.bind(tui, theme, done),
 		{
 			overlay: true,
-			overlayOptions: { anchor: "top-center", width: 100, margin: { top: 1 } },
+			overlayOptions: { anchor: "top-center", width: "100%", margin: { top: 1 } },
 		},
 	);
 }
