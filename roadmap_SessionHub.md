@@ -8,13 +8,17 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
+| v0.3 | Mode overlay (`anchor: "top-center"`) : hub flottant en haut de fenêtre. Inversion art/liste testée puis annulée (art à gauche). Tout-vert testé puis annulé (couleurs thème). Titre « Session hub » viré. Options centrées flottant au-dessus de la chatbox (`CHATBOX_H`). Outil `use-art.mjs` : changement d'art en une commande | voir git log |
 | v0.2 | Cosmétique : art statique vert flat, zéro bordure, padding. Fusion header : session-hub absorbe custom-header.ts (logo pi en session normale, header minimal sur home, custom-header retiré de l'install — backup `custom-header/`). Souris : `handleMouse` (liste + molette + options du bas cliquables, actif fullscreen), libellés New/Rename/Quitter | `59b5356` |
 | v0.1 | Écran d'accueil hub : `/hub` + auto-launch sur home, navigation 2 niveaux (workspaces → discussions), Enter/Ctrl+N/Ctrl+R/Esc, art braille vert flat + shimmer 8 FPS. Validé en TUI par Impre (retours → file v0.2) | `8915832` |
 | — | Backup custom-header archivé dans `custom-header/` avant absorption v0.2 | voir git log |
 
 ## 🎯 File priorisée
 
-*(vide — en attente des retours d'usage d'Impre)*
+### 1. Conversion image → braille dans le pipeline `use-art` ⭐
+**Demande** : « ça peut être une image tout court ? »
+**Mécanisme** : `use-art.mjs` n'accepte que du braille texte ; une image (png/jpg) doit passer par luminance → seuillage/dithering → encode braille.
+**Implémentation** : accepter `.png`/`.jpg` dans `use-art.mjs` (dépendance dev type `pngjs`, dithering Floyd-Steinberg, seuil ajustable) — le rendu du hub reste du braille, fiable partout.
 
 ## 🧠 Leçons de plateforme (à ne plus retester)
 
@@ -24,3 +28,4 @@
 4. **La capture souris n'est active qu'en mode fullscreen** (`tuiMode: "fullscreen"`) — en regular, le terminal garde le scrollback. `handleMouse` s'implémente quand même : inerte en regular, actif dès la bascule.
 5. **`TuiMouseEvent` (x, y) est local au composant récepteur** — pour forwarder à un enfant rendu dans une sous-zone, retarget manuel (shift x/y) avant `handleMouse` enfant.
 6. **`ctx.setHeader` se rejoue à chaque `session_start`** — un replacement de session (switch) re-fire `session_start` : un seul handler gère les deux modes (hub sur home, logo ailleurs).
+7. **Mode overlay** : `ctx.ui.custom(factory, { overlay: true, overlayOptions })` — anchors `top-center` etc. Le hub connaît la hauteur du terminal via `tui.terminal.rows` : filler calculé dans le render pour ancrer les options juste au-dessus de la chatbox (`CHATBOX_H`).

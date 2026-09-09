@@ -56,7 +56,9 @@ const ART_W = Math.max(...ART_LINES.map((l) => visibleWidth(l)));
 
 // ── Rendu ──
 const RESET = "\x1b[0m";
-const FLAT = "\x1b[1;32m"; // vert flat, identique au header logo
+const FLAT = "\x1b[1;32m"; // vert bold — art, sélection, libellés actifs
+const GREEN = "\x1b[32m"; // vert normal — texte de liste
+const DIM_GREEN = "\x1b[2;32m"; // vert discret — descriptions, hints
 const PAD = "  ";
 
 function padEndVis(s: string, w: number): string {
@@ -160,7 +162,7 @@ class HubScreen {
 	private showAllWorkspaces = false;
 	private showAllSessions = false;
 	private selectList!: SelectList;
-	private tui!: { requestRender(): void };
+	private tui!: { requestRender(): void; terminal: { rows: number } };
 	private theme!: Theme;
 	private done!: (v: HubResult | null) => void;
 	// Géométrie du dernier render (hit-test souris)
@@ -176,7 +178,7 @@ class HubScreen {
 		private autoLaunched: boolean,
 	) {}
 
-	bind(tui: { requestRender(): void }, theme: Theme, done: (v: HubResult | null) => void): {
+	bind(tui: { requestRender(): void; terminal: { rows: number } }, theme: Theme, done: (v: HubResult | null) => void): {
 		render: (width: number) => string[];
 		invalidate: () => void;
 		handleInput: (data: string) => void;
@@ -362,25 +364,16 @@ class HubScreen {
 	}
 
 	// ── Rendu ──
-	private title(): string {
-		const t = this.t();
-		let title = t.fg("accent", t.bold("◈ session hub"));
-		if (this.level === "sessions" && this.workspaceCwd) {
-			title += t.fg("dim", ` — ${basename(this.workspaceCwd) || this.workspaceCwd}`);
-		}
-		return title;
-	}
-
 	private render(width: number): string[] {
 		const w = Math.min(width, 110);
 		const showArt = w >= ART_W + 44;
 		const listW = Math.max(36, w - ART_W - 6);
+		const rows = this.tui.terminal.rows || 24;
 
 		const out: string[] = [];
 		out.push("");
-		out.push(PAD + this.title());
-		out.push("");
 
+		// Art à gauche (vert flat), liste à droite
 		const listLines = this.selectList.render(showArt ? listW : w - PAD.length - 2);
 		this.bodyRow = out.length;
 		this.listX0 = PAD.length + (showArt ? ART_W + 3 : 0);
@@ -396,26 +389,32 @@ class HubScreen {
 			line += listLines[y] ?? "";
 			out.push(PAD + line);
 		}
-		out.push("");
 
-		// Options du bas — cliquables (fullscreen) + raccourcis clavier
+		// Pousser les options juste au-dessus de la chatbox pi : l'overlay
+		// démarre à row = margin.top (1) ; la chatbox occupe ~4 lignes en bas.
+		const CHATBOX_H = 4; // ajustable après test visuel
+		const filler = Math.max(1, rows - CHATBOX_H - out.length - 1);
+		for (let i = 0; i < filler; i++) out.push("");
+
+		// Options du bas, centrées — cliquables (fullscreen) + raccourcis clavier
 		const t = this.t();
 		const actions: Array<{ label: string; hint: string; dimmed: boolean; run: () => void }> = [
 			{ label: "New", hint: "(ctrl+n)", dimmed: false, run: () => this.triggerNew() },
 			{ label: "Rename", hint: "(ctrl+r)", dimmed: this.level !== "sessions", run: () => this.triggerRename() },
 			{ label: "Quitter", hint: "(esc)", dimmed: false, run: () => this.onEscape() },
 		];
-		let hintLine = PAD;
-		const spans: ActionSpan[] = [];
+		let hint = "";
+		const spans: Array<{ x0: number; x1: number; run: () => void }> = [];
 		for (const a of actions) {
-			const x0 = visibleWidth(hintLine);
-			const label = a.dimmed ? t.fg("dim", a.label) : t.fg("accent", t.bold(a.label));
-			hintLine += label + t.fg("dim", ` ${a.hint}`) + "      ";
-			spans.push({ x0, x1: visibleWidth(hintLine) - 6, run: a.run });
+			const x0 = visibleWidth(hint);
+			hint += (a.dimmed ? t.fg("dim", a.label) : t.fg("accent", t.bold(a.label))) + RESET;
+			hint += t.fg("dim", ` ${a.hint}`) + RESET + "      ";
+			spans.push({ x0, x1: visibleWidth(hint) - 6, run: a.run });
 		}
+		const padL = Math.max(0, Math.floor((w - visibleWidth(hint)) / 2));
 		this.hintRow = out.length;
-		this.actionSpans = spans;
-		out.push(hintLine);
+		this.actionSpans = spans.map((s) => ({ x0: s.x0 + padL, x1: s.x1 + padL, run: s.run }));
+		out.push(" ".repeat(padL) + hint);
 		return out;
 	}
 }
@@ -429,7 +428,13 @@ async function openHub(ctx: HubContext, opts: { autoLaunched: boolean }): Promis
 		return null;
 	}
 	const screen = new HubScreen(ctx, workspaces, opts.autoLaunched);
-	return ctx.ui.custom<HubResult | null>((tui, theme, _kb, done) => screen.bind(tui, theme, done));
+	return ctx.ui.custom<HubResult | null>(
+		(tui, theme, _kb, done) => screen.bind(tui, theme, done),
+		{
+			overlay: true,
+			overlayOptions: { anchor: "top-center", width: 100, margin: { top: 1 } },
+		},
+	);
 }
 
 async function actOnResult(result: HubResult | null, ctx: HubContext): Promise<void> {
