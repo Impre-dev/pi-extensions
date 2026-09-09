@@ -24,7 +24,7 @@ import type {
 	Theme,
 } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR_NAME, getAgentDir, SessionManager, VERSION } from "@earendil-works/pi-coding-agent";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { writeSync, writeFileSync } from "node:fs";
 import { matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { SelectList, type SelectItem, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
@@ -82,7 +82,9 @@ const LIST_WIDTH = 30; // largeur de la colonne liste (labels seuls)
 const ACTION_GAP = 3; // espaces entre les options du bas
 const RACINE_ACTIONS_OFFSET_X = 1; // options du bas, niveau racine (cols, négatif = gauche) — calibré
 const SESSIONS_ACTIONS_OFFSET_X = 0; // options du bas, niveau discussions (à tuner)
-const ACTION_SOUND: string = ""; // chemin d'un .wav joué à chaque action du hub (vide = muet)
+const ACTION_SOUND: string = join(getAgentDir(), "extensions", "resources", "key.wav"); // son d'action (.wav — vide = muet)
+const SOUND_PLAYER: string = "C:\\Program Files\\AutoHotkey\\v2\\AutoHotkey64.exe"; // lecteur AHK v2 — ~100ms de démarrage vs ~370ms PowerShell (benché 09/09)
+const SOUND_SCRIPT: string = join(getAgentDir(), "extensions", "resources", "sound-daemon.ahk"); // daemon AHK : boucle stdin → SoundPlay
 
 function diagLog(msg: string): void {
 	try {
@@ -103,19 +105,29 @@ function firstLine(s: string, max: number): string {
 	return line.length > max ? line.slice(0, max - 1) + "…" : line;
 }
 
-/** Joue un son de feedback (.wav via PowerShell) — silence si non configuré. */
-// LAST RESORT: le son se joue en fire-and-forget via un process externe,
-// aucun événement terminal n'existe pour la lecture audio.
+// ── Daemon son ──
+// Un process AHK résident reçoit les chemins sur son stdin et joue en séquentiel :
+// plus d'interpréteur à démarrer à chaque action (le cumul rendait le son lent).
+// Vit jusqu'à la fermeture de pi — le pipe stdin casse, ReadLine retourne vide,
+// l'AHK sort proprement tout seul. Respawn auto s'il meurt.
+let soundDaemon: ChildProcess | null = null;
+
+function ensureSoundDaemon(): ChildProcess {
+	if (!soundDaemon || soundDaemon.exitCode !== null) {
+		soundDaemon = spawn(SOUND_PLAYER, [SOUND_SCRIPT], { stdio: ["pipe", "ignore", "ignore"] });
+		soundDaemon.unref();
+		soundDaemon.on("error", () => (soundDaemon = null)); // jamais bloquant, respawn au prochain appel
+	}
+	return soundDaemon;
+}
+
+/** Joue le son via le daemon (écriture stdin, ~0ms) — silence si non configuré.
+ *  LAST RESORT: aucun événement terminal n'existe pour la lecture audio — le
+ *  process externe résident est le seul chemin réactif. */
 function playActionSound(): void {
 	if (!ACTION_SOUND) return;
 	try {
-		const safe = ACTION_SOUND.replace(/'/g, "''");
-		const child = spawn(
-			"powershell",
-			["-NoProfile", "-Command", `(New-Object Media.SoundPlayer '${safe}').Play()`],
-			{ detached: true, stdio: "ignore" },
-		);
-		child.unref();
+		ensureSoundDaemon().stdin?.write(ACTION_SOUND + "\n");
 	} catch {
 		/* pas de son : jamais bloquant */
 	}
@@ -300,14 +312,17 @@ class HubScreen {
 			return;
 		}
 		if (value.startsWith("ws:")) {
+			playActionSound();
 			this.level = "sessions";
 			this.workspaceCwd = value.slice(3);
 			this.showAllSessions = false;
 			this.rebuild();
 		} else if (value === "all-ws") {
+			playActionSound();
 			this.showAllWorkspaces = true;
 			this.rebuild();
 		} else if (value === "all-sess") {
+			playActionSound();
 			this.showAllSessions = true;
 			this.rebuild();
 		} else if (value.startsWith("sess:")) {
@@ -321,12 +336,14 @@ class HubScreen {
 	private onEscape(): void {
 		// Mode renommage : Esc annule le mode d'abord.
 		if (this.pendingRename) {
+			playActionSound();
 			this.pendingRename = false;
 			this.rebuild();
 			this.tui.requestRender();
 			return;
 		}
 		if (this.level === "sessions") {
+			playActionSound();
 			this.level = "workspaces";
 			this.workspaceCwd = null;
 			this.showAllSessions = false;
@@ -374,6 +391,7 @@ class HubScreen {
 
 	private triggerRoot(): void {
 		if (this.level !== "workspaces") return;
+		playActionSound();
 		try {
 			const child = spawn("explorer.exe", [getAgentDir()], {
 				detached: true,
@@ -553,6 +571,7 @@ async function openHub(ctx: HubContext, opts: { openWorkspace?: string } = {}): 
 		return null;
 	}
 	const screen = new HubScreen(ctx, workspaces, opts.openWorkspace);
+	ensureSoundDaemon(); // amorce le daemon pendant l'affichage du hub — le 1er son est réactif aussi
 	hubOpen = true;
 	try {
 		return await ctx.ui.custom<HubResult | null>(
