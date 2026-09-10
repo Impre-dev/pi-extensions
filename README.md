@@ -1,7 +1,8 @@
 # pi-extensions
 
 Extensions pour [pi](https://github.com/badlogic/pi-mono) (pi-coding-agent).
-Un repo, un dossier par extension — les `roadmap_<Projet>.md` et `discovery_<Projet>.md` vivent à la racine.
+Un repo, un dossier par extension — chaque extension embarque son `roadmap_<Projet>.md`
+et `discovery_<Projet>.md`.
 
 | Extension | Description | Install |
 |---|---|---|
