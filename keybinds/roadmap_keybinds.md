@@ -9,16 +9,13 @@
 | Version | Contenu | Commit |
 |---|---|---|
 | v1.0 | Centralisation : l'extension rejoint pi-extensions (ex-MyPiKeybinds → keybinds, contenu copy-only — aucun code modifié à la migration) : Ctrl+C sûr, sélection écran, cut/redo one-shot, molette ×4, F8. Doc : `keybinds/PI-keybinds List.md`. + scripts repo `dev/sync.ps1` (sync repo→install, relocation-proof) et `move-and-rename.ps1` (archive de la migration) | 0a445e9 |
+| v1.1 | Vue épurée du transcript (**F5**) : tool rows masquées via override render posé sur chaque instance ToolExecutionComponent (immunisé au reset `updateDisplay`, délégation native en OFF), thinking forcé caché samplé/restauré, **scroll anchor OSC-133** — capture de l'ordinal du message lu → `renderNow()` synchrone → restore avec disableFollow (fix F-01 « descend tt en bas »), sweep streaming event-driven (`message_update` / `tool_execution_*`, zéro polling). Typecheck strict ✅ (`keybinds/dev/tsconfig.dev.json`). Validé TUI Impre. Historique du choix de touche : ctrl+alt+shift+p morte en legacy (leçon #1) → alias ctrl+alt+p → F5 retenu | 1ecba22 |
 
 ## 🎯 File priorisée
 
-### 1. Toggle vue épurée + navigation rapide ⭐
-**Demande** : « le but c'est de pouvoir naviguer très vite dans la discussion, remonter à un msg, réafficher les trucs » (10/09)
-**Constats** : Ctrl+T natif (`app.thinking.toggle`) marche à chaud mais **scrolle tout en bas de la discussion** quand on enclenche le hide — casse exactement le cas d'usage navigation. Ctrl+O natif (`app.tools.expand`) quasi sans effet. NB : `hideThinkingBlock: true` est déjà actif dans les settings (pensées masquées en dur).
-**Mécanisme** : API `ctx.ui.getToolsExpanded()` / `setToolsExpanded(bool)` pour l'état tools (extensions.md). Pas d'event natif « état changé » ni d'interception des keybinds natifs documentés → raccourci propre via `registerShortcut` + état interne. L'extension possède déjà le socle nécessaire (`CustomEditor`, accès `TuiAltScreen`, listener TUI).
-**Implémentation** : à dessiner — shortcut dédié, toggle masquage tools, préservation de la position de lecture du transcript (voir discovery F-01), réaffichage à la demande.
-**Question d'architecture à trancher (brainstorm de lancement)** : (a) *collapse fin* via `setToolsExpanded` — headers des tools restent visibles, zéro override, natif ; (b) *masquage dur* des tool rows — il ne reste QUE les messages user/assistant, mais passe par surcharger le rendu des built-in tools (renderers). Le volet thinking est déjà réglé en dur (`hideThinkingBlock: true`) — le toggle ne concerne que tools + navigation.
+Aucun point ouvert. En attente de décision (discovery) : F-04 (mode épuré persisté), F-05 (listeners perdus après switch tui-mode à chaud — backport du fix lazy au Ctrl+C/molette).
 
 ## 🧠 Leçons de plateforme
 
-1. (à acter après la première itération validée)
+1. **SHIFT perdu sur les lettres en encodage legacy** — terminal sans protocole clavier kitty : `ctrl+alt+shift+lettre` arrive physiquement comme `ctrl+alt+lettre`, et `matchesKey` de pi-tui ne gère le fallback legacy que pour ctrl+alt SANS shift (keys.js) → un binding shift+lettre ne matche jamais. Prouvé : v1 ctrl+alt+shift+p muette, alias v2 fired sur les deux pressions (même octet reçu), F5 ok. **Contournement : préférer les F-keys** (séquence identique legacy/kitty — F8, F5).
+2. **Le scroll natif du transcript est un offset ABSOLU en lignes** (`ScrollView.updateLayout` de pi-tui) : tout toggle qui réduit la hauteur du contenu décale le point de lecture et peut clamp + `followingEnd` (collé en bas). **Contournement** : capturer un anchor de contenu (ordinal des marques OSC-133;A — émises par user/assistant uniquement, donc stables avant/après le toggle) → `renderNow()` synchrone → restore avec `disableFollow: true`.
