@@ -16,6 +16,7 @@
 | `Suppr` / `Backspace` | **Supprime le texte sélectionné** à la souris (curseur posé à l'endroit de la suppression) | Défaut pi : efface 1 caractère avant/après le curseur — conservé si la sélection est hors éditeur (le surlignage est juste vidé) |
 | `Ctrl+Shift+Z` | **Redo** de la dernière suppression de sélection | pi n'a aucun redo. Invalide si tu as tapé autre chose entre-temps |
 | `F8` | **Ouvre le dossier du projet** (`cwd`) dans l'Explorateur Windows | Nouveau (aucun binding natif) |
+| `F5` | **Vue épurée** : masque les tool rows du transcript (ne restent que les messages user/assistant) + thinking forcé caché. **Scroll anchor** : le point de lecture ne bouge pas au toggle (fix du saut-en-bas natif). Même touche pour réafficher (état d'origine restauré) | Nouveau (aucun binding natif). Combo avec `Ctrl+↑/↓` (saut de message en message) pour naviguer vite en mode épuré |
 | Molette | Scroll **4 lignes par cran** | Défaut pi : 1 ligne/cran (hardcodé, non réglable) |
 | `Alt+molette` | Scroll 20 lignes par cran (×5) | Natif pi, inchangé |
 | Drag souris | **Ne copie plus automatiquement** au relâchement | Désactivé via setting natif `fullscreenCopyOnSelect: false` (settings.json) — la copie devient explicite (`Ctrl+C`) |
