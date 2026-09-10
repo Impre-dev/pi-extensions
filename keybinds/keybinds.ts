@@ -53,6 +53,13 @@
  *             message — les marques OSC-133 ignorent les tools). Mécanisme
  *             détaillé dans la section « Vue épurée » plus bas.
  *
+ * 10. Indicateur « scroll to end » (visible quand on est remonté dans le
+ *             transcript) : réduit à « ↓ » gras sur fond sélectionné — le
+ *             natif « ↓ Jump to latest message · End » est verbeux. Le clic
+ *             natif reste opérationnel (zone recalculée à chaque frame à
+ *             partir du texte rendu). Pas d'agrandissement de police possible
+ *             (grille terminal uniforme) : le gras + fond compensent.
+ *
  * Pas de redo général : pi n'en a tout simplement pas (aucun code, aucun
  * binding). L'undo (Ctrl+Z) marche, y compris pour nos suppressions via
  * setText. Ici on couvre juste nos suppressions.
@@ -89,6 +96,8 @@ interface AltScreenInternals {
 	clearTextSelection?(): void;
 	copyActiveSelectionToClipboard?(): Promise<boolean>;
 	flash?(message: string, durationMs?: number): void;
+	/** Indicateur « scroll to end » (TuiAltScreen, champ public) — factory appelée à chaque frame quand on n'est pas en bas. */
+	scrollToEndIndicator?: () => string;
 	/** Présent sur TuiBase, absent de l'interface TUI — comparaison d'identité uniquement. */
 	getFocusedComponent?(): unknown;
 }
@@ -439,6 +448,17 @@ export default function (pi: ExtensionAPI) {
 			// 3. Molette plus rapide (fullscreen uniquement — champ absent sinon).
 			if (alt.wheelScrollLines !== undefined) {
 				alt.wheelScrollLines = WHEEL_SCROLL_LINES;
+			}
+
+			// 10. Indicateur « scroll to end » réduit à une flèche (le natif est
+			// verbeux : « ↓ Jump to latest message · End »). Même guard que la
+			// molette : le champ n'existe que sur TuiAltScreen. Style : gras sur
+			// le fond sélectionné natif — pas d'agrandissement de police possible
+			// (grille terminal uniforme), le gras compense. Le padding élargit la
+			// zone cliquable (rect recalculé par pi à chaque frame sur le texte).
+			if (alt.wheelScrollLines !== undefined) {
+				alt.scrollToEndIndicator = () =>
+					ctx.ui.theme.bg("selectedBg", ctx.ui.theme.bold("  ↓  "));
 			}
 
 			const editor = new MyPiEditor(tui, theme, keybindings, alt);
