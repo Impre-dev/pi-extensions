@@ -9,6 +9,7 @@ et `discovery_<Projet>.md`.
 | [hub](hub/) | Écran d'accueil : workspaces & discussions, art braille | Copier `hub/hub.ts` dans `~/.pi/agent/extensions/` |
 | [keybinds](keybinds/) | Tweaks UX fullscreen : sélection écran, cut/redo, molette, Ctrl+C sûr, F8 | Copier `keybinds/keybinds.ts` dans `~/.pi/agent/extensions/` |
 | [multi-rules](multi-rules/) | Règles multi-fichiers : global + groupes + racines workspace (Pi-xel) | Copier `multi-rules/multi-rules.ts` dans `~/.pi/agent/extensions/` |
+| [d2r2](d2r2/) | Son de fin de réponse : playlist séquentielle de sons D2R (daemon AHK dédié) | `d2r2/deploy.ps1` (copie + bootstrap daemon) puis /reload |
 
 `custom-header/` : archive — rôle absorbé par le hub en v0.2.
 

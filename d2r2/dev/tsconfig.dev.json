@@ -1,0 +1,16 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"types": ["node"],
+		"typeRoots": ["../../hub/dev/node_modules/@types"],
+		"paths": {
+			"@earendil-works/pi-coding-agent": ["C:/Users/Pelo/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"]
+		}
+	},
+	"include": ["../d2r2.ts"]
+}
