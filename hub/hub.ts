@@ -774,6 +774,20 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// Le daemon meurt à chaque transition de session : pi recharge les
+	// extensions (session_shutdown) — sans kill, l'ancien daemon orphelin
+	// reste bloqué sur ReadLine, ne traite pas la demande de fermeture de
+	// #SingleInstance, et le respawn suivant affiche « Could not close the
+	// previous instance ». Le hub suivant respawnera un daemon frais, amorçage
+	// caché par l'affichage du hub.
+	pi.on("session_shutdown", () => {
+		// end() et pas kill() : on referme la porte, le daemon FINIT le son en
+		// cours (PlaySync), lit l'EOF et sort tout seul. kill() exécuterait le
+		// daemon en plein son — coupé au milieu (constaté en TUI 10/09).
+		soundDaemon?.stdin?.end();
+		soundDaemon = null;
+	});
+
 	pi.on("session_start", async (event, ctx) => {
 		if (ctx.mode !== "tui" || !ctx.hasUI) return;
 		const onHome = ctx.cwd === homedir();
