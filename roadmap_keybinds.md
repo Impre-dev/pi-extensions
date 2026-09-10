@@ -8,6 +8,7 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
+| v1.0 | Centralisation : l'extension rejoint pi-extensions (ex-MyPiKeybinds → keybinds, contenu copy-only — aucun code modifié à la migration) : Ctrl+C sûr, sélection écran, cut/redo one-shot, molette ×4, F8. Doc : `keybinds/PI-keybinds List.md`. + scripts repo `dev/sync.ps1` (sync repo→install, relocation-proof) et `move-and-rename.ps1` (archive de la migration) | 0a445e9 |
 
 ## 🎯 File priorisée
 
