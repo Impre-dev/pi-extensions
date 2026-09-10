@@ -1,5 +1,5 @@
 /**
- * Session Hub — écran d'accueil pi : workspaces & discussions, art braille.
+ * Hub — écran d'accueil pi : workspaces & discussions, art braille.
  *
  * - Lancé depuis le home : le hub s'ouvre d'office (header minimal).
  *   En session normale : header logo pi + version (absorbe custom-header.ts).
@@ -702,10 +702,10 @@ async function actOnResult(
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("hub", {
 		description:
-			"Session hub — workspaces & discussions (/hub <path|id> reprendre, /hub --new <cwd> créer)",
+			"Hub — workspaces & discussions (/hub <path|id> reprendre, /hub --new <cwd> créer)",
 		handler: async (args, ctx) => {
 			if (ctx.mode !== "tui" || !ctx.hasUI) {
-				ctx.ui.notify("Session hub : mode TUI uniquement", "warning");
+				ctx.ui.notify("Hub : mode TUI uniquement", "warning");
 				return;
 			}
 
@@ -766,7 +766,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Ctrl+H : ouvrir le hub depuis n'importe où (discussions, accueil natif)
 	pi.registerShortcut("ctrl+h", {
-		description: "Session hub — workspaces & discussions",
+		description: "Hub — workspaces & discussions",
 		handler: async (ctx) => {
 			if (ctx.mode !== "tui" || !ctx.hasUI) return;
 			const result = await openHub(ctx);

@@ -1,8 +1,10 @@
-# Roadmap SessionHub
+# Roadmap Hub
 
-> Document de pilotage — statut au 09/09. Extension pi : écran d'accueil
-> workspaces & discussions avec art braille (tête anime, vert flat).
-> Source de dev : `test_pi/session-hub/` — install : `~/.pi/agent/extensions/session-hub.ts`.
+> Document de pilotage — statut au 10/09. Extension pi : écran d'accueil
+> workspaces & discussions avec art braille (robot, vert flat).
+> Source de dev : `hub/` — install : `~/.pi/agent/extensions/hub.ts`.
+> (ex-SessionHub — renommé hub le 10/09 ; les lignes livrées ci-dessous
+> gardent le nom d'époque, c'est l'historique authentique.)
 
 ## ✅ Livré & poussé
 

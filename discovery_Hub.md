@@ -1,4 +1,4 @@
-# Discovery SessionHub
+# Discovery Hub
 
 > Sas de décision — les découvertes attendent ici leur statut. L'adoptée migre
 > vers la File priorisée du roadmap ; l'écartée reste en mémoire.

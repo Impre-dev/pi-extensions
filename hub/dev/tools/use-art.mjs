@@ -2,7 +2,7 @@
 /**
  * use-art — remplace le pixel art du hub en une commande.
  *
- * Pipeline : resize braille propre → réinjection dans session-hub.ts.
+ * Pipeline : resize braille propre → réinjection dans hub.ts.
  * ART_W et le layout (listW, showArt) se recalculent automatiquement
  * depuis la constante — aucun autre fichier à toucher.
  *
@@ -37,12 +37,12 @@ const lines = readFileSync(tmp, "utf8")
 	.map((l) => `\t\t"${l}",`);
 const block = `const ART_LINES: string[] = [\n${lines.join("\n")}\n];`;
 
-// 3. Injection dans session-hub.ts (remplace le tableau entier)
-const tsPath = join(here, "..", "..", "session-hub.ts");
+// 3. Injection dans hub.ts (remplace le tableau entier)
+const tsPath = join(here, "..", "..", "hub.ts");
 let code = readFileSync(tsPath, "utf8");
 const re = /const ART_LINES: string\[\] = \[\n[\s\S]*?\n\];/;
 if (!re.test(code)) {
-	console.error("Bloc ART_LINES introuvable dans session-hub.ts");
+	console.error("Bloc ART_LINES introuvable dans hub.ts");
 	process.exit(1);
 }
 code = code.replace(re, block);

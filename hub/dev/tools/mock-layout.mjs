@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * mock-layout — maquette de l'écran d'accueil session-hub.
+ * mock-layout — maquette de l'écran d'accueil hub.
  * Compose l'art braille (à gauche) + la liste (à droite) et écrit
  * le résultat avec couleurs ANSI. Ouvrir avec `cat` dans un terminal.
  *
@@ -62,7 +62,7 @@ const H = Math.max(art.length, listLines.length + 4); // +4 : titre, sep, hint
 const innerW = artW + 3 + listW; // art | 3 espaces | liste
 const top = `╭${"─".repeat(innerW)}╮`;
 const bot = `╰${"─".repeat(innerW)}╯`;
-const title = ` ${BOLD}${ACCENT("◈ session hub")}${RESET}`;
+const title = ` ${BOLD}${ACCENT("◈ hub")}${RESET}`;
 const hint = DIM("  ↑↓ navigate · enter select · n new · r rename · esc quit");
 
 const rows = [];
