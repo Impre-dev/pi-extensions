@@ -8,15 +8,17 @@
  *             1re pression efface l'éditeur, 2e quitte) est neutralisé quand
  *             l'éditeur principal a le focus. Les dialogs/selectors gardent
  *             leur Ctrl+C natif (= cancel). Quitter reste Ctrl+D (éditeur vide)
- *             ou /quit.
+ *             ou /quit. Sélection dans l'éditeur : le texte LOGIQUE est copié
+ *             (conversion géométrique — voir plus bas), pas les lignes
+ *             visuelles : pas de « \n » parasites aux soft-wraps.
  *
  * 2. Suppr / Backspace — supprime le texte de la sélection écran si ce texte
  *             appartient à l'éditeur (avec undo via Ctrl+Z, snapshot posé par
- *             setText). Si la sélection est hors éditeur (transcript), le
- *             surlignage est vidé et le Backspace/Suppr normal s'applique.
- *             Limite connue : si le MÊME texte existe dans l'éditeur et que tu
- *             sélectionnes son double dans le transcript, la suppression
- *             frappera l'éditeur (matching par contenu). Undo répare.
+ *             setText). Multi-lignes OK, soft-wraps compris : la sélection
+ *             écran (rows/cols) est convertie en offsets logiques, sans
+ *             matching de contenu. Sélection hors éditeur (transcript ou autre
+ *             composant du dock) : le surlignage est vidé et le
+ *             Backspace/Suppr normal s'applique.
  *
  * 3. Molette — 4 lignes par cran au lieu de 1 (pi hardcode 1). Alt+molette
  *             reste ×5 (multiplier interne de pi).
@@ -29,7 +31,8 @@
  *             écran si elle existe, sinon vers la dernière réponse du modèle.
  *
  * 5. Ctrl+X  — vrai cut GUI : sélection écran → copie + suppression (undoable,
- *             redoable). Sans sélection → comportement natif pi conservé
+ *             redoable). Dans l'éditeur : texte logique propre (même conversion
+ *             géométrique). Sans sélection → comportement natif pi conservé
  *             (copie la dernière réponse du modèle).
  *
  * 6. Ctrl+Shift+Z — redo one-shot de la dernière suppression de sélection
@@ -73,13 +76,38 @@
  * on intercepte les touches au niveau TUI (addInputListener tourne AVANT le
  * dispatch vers le composant focus, donc avant app.clear).
  *
+ * Conversion géométrique (cut/copy/suppr multi-lignes) : getActiveSelectionText
+ * reconstruit le texte depuis les lignes VISUELLES de l'écran jointes par
+ * "\n" — dès qu'une sélection chevauche un soft-wrap (ligne logique affichée
+ * sur plusieurs rows), ce texte contient des "\n" inexistants dans le texte
+ * logique : tout matching par contenu échoue (bug « une seule ligne » v1.2).
+ * On convertit donc les COORDONNÉES : TuiAltScreen.getSelectionBounds donne
+ * rows/cols écran ; la box de layout de l'éditeur (tui.currentLayout —
+ * l'éditeur n'a pas de layout node propre, sa box est celle du Container qui
+ * le porte, identifiée par children) donne rect.y + lines (= résultat du
+ * dernier render : [topBorder, ...layoutLines visibles, bottomBorder, …]) et
+ * paintBox dessine lines[lineOffset + row - rect.y] → chaque row écran devient
+ * un index de layoutLine ; layoutText(lastWidth) rejoué fournit le texte de
+ * chaque layoutLine, que mapLayoutLinesToRanges convertit en plage logique par
+ * partitionnement séquentiel (indexOf croissant, sans ambiguïté). Inclusivité
+ * du bout : start = début du graphème sous le point, end l'inclut (cf.
+ * getSelectionColumns de pi-tui). Toutes les étapes sont gardées : maillon
+ * manquant → fallback matching par contenu (comportement v1.2), jamais crash.
+ *
  * Toutes les capacités ciblées sont gardées : si pi renomme/retire une API
  * interne, l'extension se contente de ne rien faire (pas de crash).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CustomEditor, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import { matchesKey, type TUI, type EditorTheme, type ScrollView } from "@earendil-works/pi-tui";
+import {
+	matchesKey,
+	sliceByColumn,
+	visibleWidth,
+	type TUI,
+	type EditorTheme,
+	type ScrollView,
+} from "@earendil-works/pi-tui";
 
 /** Lignes par cran de molette (défaut pi : 1). Ajustable. */
 const WHEEL_SCROLL_LINES = 4;
@@ -95,11 +123,118 @@ interface AltScreenInternals {
 	getActiveSelectionText?(): string | undefined;
 	clearTextSelection?(): void;
 	copyActiveSelectionToClipboard?(): Promise<boolean>;
+	/** Bornes de la sélection écran : rows/cols écran, start avant end. */
+	getSelectionBounds?(): ScreenSelectionBounds | undefined;
+	/** Copie directe d'un texte (flash "Copied!"/"Copy failed" géré côté renderer). */
+	copyTextToClipboard?(text: string): Promise<boolean>;
 	flash?(message: string, durationMs?: number): void;
 	/** Indicateur « scroll to end » (TuiAltScreen, champ public) — factory appelée à chaque frame quand on n'est pas en bas. */
 	scrollToEndIndicator?: () => string;
 	/** Présent sur TuiBase, absent de l'interface TUI — comparaison d'identité uniquement. */
 	getFocusedComponent?(): unknown;
+}
+
+/** Point de sélection écran (TuiAltScreen.getSelectionBounds). */
+interface ScreenSelectionPoint {
+	row: number;
+	col: number;
+	/** ScrollView d'origine : défini = sélection transcript, absent = écran physique. */
+	scrollView?: unknown;
+}
+
+/** Bornes d'une sélection écran (start toujours avant end). */
+interface ScreenSelectionBounds {
+	start: ScreenSelectionPoint;
+	end: ScreenSelectionPoint;
+}
+
+/**
+ * Box de layout d'un composant simple (renderLayoutFrame, pi-tui/layout).
+ * lines = résultat du dernier render(width) du composant ; paintBox dessine
+ * lines[lineOffset + row - rect.y] aux rows écran [max(rect.y, clip.y), min(…)).
+ */
+interface EditorLayoutBox {
+	component?: unknown;
+	rect?: { x: number; y: number; width: number; height: number };
+	lines?: readonly string[];
+	lineOffset?: number;
+	children?: EditorLayoutBox[];
+}
+
+/**
+ * Vue typée des internes runtime de l'éditeur (privés TS, présents au runtime).
+ * state = état d'édition ; les métriques sont posées à chaque render().
+ */
+interface EditorInternals {
+	state?: { lines: string[]; cursorLine: number; cursorCol: number };
+	scrollOffset?: unknown;
+	lastWidth?: unknown;
+	renderedVisibleLineCount?: unknown;
+	paddingX?: unknown;
+	layoutText?: (width: number) => { text: string }[] | undefined;
+}
+
+/**
+ * Box de layout rendant CE composant (walk défensif de l'arbre).
+ * L'éditeur n'a pas de layout node propre : sa box est celle du Container qui
+ * le porte → identité directe OU identité par contenu (children inclut editor).
+ */
+function findEditorBox(box: EditorLayoutBox | undefined, editor: unknown): EditorLayoutBox | undefined {
+	if (!box) return undefined;
+	if (box.component === editor) return box;
+	const comp = box.component as { children?: unknown[] } | undefined;
+	if (Array.isArray(comp?.children) && comp.children.includes(editor)) return box;
+	for (const child of box.children ?? []) {
+		const found = findEditorBox(child, editor);
+		if (found) return found;
+	}
+	return undefined;
+}
+
+/**
+ * Partitionne les layoutLines (texte visuel par chunk de wrap) contre les
+ * lignes logiques : ranges[k] = plage [start, end) dans getText() du
+ * layoutLine k. Principe : les chunks d'une ligne logique s'enchaînent —
+ * indexOf croissant depuis la dernière position, sans ambiguïté d'occurrence.
+ * Tableau potentiellement troué si désynchronisation détectée (l'appelant
+ * teste chaque range utilisée).
+ */
+function mapLayoutLinesToRanges(
+	lines: readonly string[],
+	layoutLines: readonly { text: string }[],
+): ({ start: number; end: number } | undefined)[] {
+	const ranges: ({ start: number; end: number } | undefined)[] = new Array(layoutLines.length);
+	let k = 0;
+	let offset = 0; // début de la ligne logique courante dans getText()
+	for (let i = 0; i < lines.length && k < layoutLines.length; i++) {
+		const line = lines[i] ?? "";
+		if (line === "") {
+			// Ligne vide : une layoutLine au texte vide, plage dégénérée.
+			if ((layoutLines[k]?.text ?? "") === "") {
+				ranges[k] = { start: offset, end: offset };
+				k++;
+			}
+			offset += 1; // "\n"
+			continue;
+		}
+		let pos = 0;
+		let guard = 0;
+		while (k < layoutLines.length && guard++ < 10000) {
+			const t = layoutLines[k]?.text ?? "";
+			if (t === "") {
+				k++; // layoutLine vide inattendue : skip défensif
+				continue;
+			}
+			const found = line.indexOf(t, pos);
+			if (found === -1) break; // la ligne logique suivante prendra le relais
+			ranges[k] = { start: offset + found, end: offset + found + t.length };
+			pos = found + t.length;
+			k++;
+			if (pos >= line.length) break;
+		}
+		offset += line.length + 1; // +1 = "\n"
+	}
+	return ranges;
 }
 
 class MyPiEditor extends CustomEditor {
@@ -108,9 +243,9 @@ class MyPiEditor extends CustomEditor {
 	/** Redo one-shot : état pré/post de la dernière suppression + position du curseur. */
 	private redoState: { before: string; after: string; cursorOffset: number } | null = null;
 
-	/** Vue typée de l'état interne de l'éditeur (privé TS, présent au runtime). */
-	private get stateInternal(): { lines: string[]; cursorLine: number; cursorCol: number } | undefined {
-		return (this as unknown as { state?: { lines: string[]; cursorLine: number; cursorCol: number } }).state;
+	/** Vue typée des internes runtime de l'éditeur (privés TS, présents au runtime). */
+	private get editorInternals(): EditorInternals {
+		return this as unknown as EditorInternals;
 	}
 
 	// `tui` est hérité de Editor (protected) — pas de redéclaration ici.
@@ -125,10 +260,17 @@ class MyPiEditor extends CustomEditor {
 			return;
 		}
 		if (matchesKey(data, "ctrl+x") && this.alt.hasActiveSelection?.()) {
-			// Cut : copie (le renderer flashe) + suppression de la sélection.
-			// Sans sélection : pas de return → super route vers le comportement
-			// natif pi (copie de la dernière réponse du modèle).
-			void this.alt.copyActiveSelectionToClipboard?.();
+			// Cut : copie + suppression de la sélection. Dans l'éditeur : texte
+			// LOGIQUE propre (conversion géométrique — pas de "\n" de soft-wrap) ;
+			// sinon (transcript) : chemin renderer natif. Sans sélection : pas de
+			// return → super route vers le comportement natif pi (copie de la
+			// dernière réponse du modèle).
+			const editorText = this.copyScreenSelectionText();
+			if (editorText !== undefined && this.alt.copyTextToClipboard) {
+				void this.alt.copyTextToClipboard(editorText);
+			} else {
+				void this.alt.copyActiveSelectionToClipboard?.();
+			}
 			this.deleteScreenSelection();
 			return;
 		}
@@ -156,11 +298,51 @@ class MyPiEditor extends CustomEditor {
 	/**
 	 * Supprime le texte sélectionné à la souris s'il appartient à l'éditeur.
 	 * Retourne true si la sélection a été consommée (la touche ne va pas plus loin).
+	 *
+	 * Chemin principal : conversion GÉOMÉTRIQUE (cf. screenSelectionToEditorRange)
+	 * — exacte multi-lignes, soft-wraps compris. Sélection transcript ou autre
+	 * composant : surlignage vidé, touche normale. getSelectionBounds absent
+	 * (refactor pi) : fallback historique par contenu.
 	 */
 	private deleteScreenSelection(): boolean {
 		const sel = this.alt.getActiveSelectionText?.();
 		if (!sel) return false;
 
+		const bounds = this.alt.getSelectionBounds?.();
+		if (!bounds) return this.deleteSelectionByContent(sel);
+
+		if (bounds.start.scrollView || bounds.end.scrollView) {
+			// Sélection hors éditeur (transcript) : on vide le surlignage et on
+			// laisse le Backspace/Suppr normal s'appliquer. Le test scrollView
+			// élimine la limite v1.2 (même texte présent dans l'éditeur).
+			this.alt.clearTextSelection?.();
+			this.tui.requestRender();
+			return false;
+		}
+
+		const range = this.screenSelectionToEditorRange(bounds);
+		if (!range) {
+			// Ni transcript ni éditeur (autre composant du dock) : idem, neutre.
+			this.alt.clearTextSelection?.();
+			this.tui.requestRender();
+			return false;
+		}
+
+		const text = this.getText();
+		const after = text.slice(0, range.start) + text.slice(range.end);
+		// Un nouvel état redo invalide le précédent (comportement GUI standard).
+		this.redoState = { before: text, after, cursorOffset: range.start };
+		this.setTextAndCursor(after, range.start);
+		this.alt.clearTextSelection?.();
+		this.tui.requestRender();
+		return true;
+	}
+
+	/**
+	 * Fallback historique (v1.2) : matching par contenu, si getSelectionBounds
+	 * est indisponible. Limites connues (soft-wraps, double transcript/éditeur).
+	 */
+	private deleteSelectionByContent(sel: string): boolean {
 		const text = this.getText();
 		// Matching par contenu : la sélection écran peut embarquer le padding de
 		// l'éditeur ou des espaces de fin de ligne → on tente brut, puis trimé.
@@ -171,20 +353,103 @@ class MyPiEditor extends CustomEditor {
 			match = sel.trim();
 		}
 		if (idx === -1) {
-			// Sélection hors éditeur (transcript) : on vide le surlignage et on
-			// laisse le Backspace/Suppr normal s'appliquer.
 			this.alt.clearTextSelection?.();
 			this.tui.requestRender();
 			return false;
 		}
-
 		const after = text.slice(0, idx) + text.slice(idx + match.length);
-		// Un nouvel état redo invalide le précédent (comportement GUI standard).
 		this.redoState = { before: text, after, cursorOffset: idx };
 		this.setTextAndCursor(after, idx);
 		this.alt.clearTextSelection?.();
 		this.tui.requestRender();
 		return true;
+	}
+
+	/**
+	 * Texte LOGIQUE de la sélection écran si elle appartient à l'éditeur — copie
+	 * propre (pas de "\n" parasites aux soft-wraps). undefined sinon.
+	 */
+	copyScreenSelectionText(): string | undefined {
+		const bounds = this.alt.getSelectionBounds?.();
+		if (!bounds || bounds.start.scrollView || bounds.end.scrollView) return undefined;
+		const range = this.screenSelectionToEditorRange(bounds);
+		if (!range) return undefined;
+		return this.getText().slice(range.start, range.end);
+	}
+
+	/**
+	 * Conversion géométrique : sélection écran (rows/cols) → plage [start, end)
+	 * dans getText(). undefined si la sélection n'appartient pas à l'éditeur ou
+	 * si un maillon manque (champ renommé par pi → l'appelant fallback).
+	 *
+	 * Principe : la box de layout de l'éditeur (trouvée par findEditorBox) porte
+	 * rect.y + lines = [topBorder, ...layoutLines visibles, bottomBorder,
+	 * …autocomplete] et paintBox dessine lines[lineOffset + row - rect.y] →
+	 * chaque row écran devient un index de layoutLine ; layoutText(lastWidth)
+	 * rejoué fournit le texte de chaque layoutLine, converti en plage logique
+	 * par mapLayoutLinesToRanges. Colonne écran → index caractère via
+	 * sliceByColumn (largeur d'affichage, wide-char safe). Inclusivité : le
+	 * point de START désigne le début du graphème sous lui ; le point de END
+	 * INCLUT ce caractère (getSelectionColumns de pi-tui) sauf s'il est
+	 * au-delà du texte (padding) — dans ce cas plage de fin.
+	 */
+	private screenSelectionToEditorRange(bounds: ScreenSelectionBounds): { start: number; end: number } | undefined {
+		if (bounds.start.scrollView || bounds.end.scrollView) return undefined; // transcript
+
+		const internals = this.editorInternals;
+		const lines = internals.state?.lines;
+		const scrollOffset = internals.scrollOffset;
+		const lastWidth = internals.lastWidth;
+		const visible = internals.renderedVisibleLineCount;
+		if (!lines || typeof scrollOffset !== "number" || typeof lastWidth !== "number" || typeof visible !== "number") {
+			return undefined;
+		}
+
+		const tuiLayout = this.tui as unknown as EpureTui; // même accès que la vue épurée
+		const box = findEditorBox(tuiLayout.currentLayout?.root as EditorLayoutBox | undefined, this);
+		const rect = box?.rect;
+		if (!rect || !Array.isArray(box.lines)) return undefined;
+		if (box.lines.length < visible + 2) return undefined; // structure inattendue
+
+		const layoutLines = internals.layoutText?.(lastWidth);
+		if (!Array.isArray(layoutLines)) return undefined;
+		const ranges = mapLayoutLinesToRanges(lines, layoutLines);
+
+		const paddingXSetting = typeof internals.paddingX === "number" ? internals.paddingX : 0;
+		const paddingX = Math.min(paddingXSetting, Math.max(0, Math.floor((rect.width - 1) / 2)));
+
+		const toOffset = (point: ScreenSelectionPoint, isEnd: boolean): number | undefined => {
+			const lineIndex = (box.lineOffset ?? 0) + point.row - rect.y;
+			if (lineIndex < 0) return undefined; // au-dessus de la box éditeur
+			let layoutIndex: number;
+			let clamp: "start" | "end" | undefined;
+			if (lineIndex === 0) {
+				layoutIndex = scrollOffset; // topBorder → début du texte
+				clamp = "start";
+			} else if (lineIndex === visible + 1) {
+				layoutIndex = scrollOffset + visible - 1; // bottomBorder → fin du texte
+				clamp = "end";
+			} else if (lineIndex > visible + 1) {
+				return undefined; // autocomplete / sous la box → pas notre texte
+			} else {
+				layoutIndex = scrollOffset + (lineIndex - 1);
+			}
+			const range = ranges[layoutIndex];
+			if (!range) return undefined;
+			if (clamp === "start") return range.start;
+			if (clamp === "end") return range.end;
+			const lineText = layoutLines[layoutIndex]?.text ?? "";
+			const colText = Math.max(0, point.col - rect.x - paddingX);
+			const lineWidth = visibleWidth(lineText);
+			const idx = colText >= lineWidth ? lineText.length : sliceByColumn(lineText, 0, colText, true).length;
+			const included = isEnd && colText < lineWidth ? 1 : 0;
+			return Math.min(range.start + idx + included, range.end);
+		};
+
+		const start = toOffset(bounds.start, false);
+		const end = toOffset(bounds.end, true);
+		if (start === undefined || end === undefined || end <= start) return undefined;
+		return { start, end };
 	}
 
 	/**
@@ -194,7 +459,7 @@ class MyPiEditor extends CustomEditor {
 	 */
 	private setTextAndCursor(text: string, cursorOffset: number): void {
 		this.setText(text);
-		const state = this.stateInternal;
+		const state = this.editorInternals.state;
 		if (!state?.lines) return;
 		let remaining = Math.max(0, Math.min(cursorOffset, text.length));
 		let line = 0;
@@ -476,8 +741,15 @@ export default function (pi: ExtensionAPI) {
 					if (alt.getFocusedComponent?.() !== activeEditor.current) return undefined;
 
 					if (alt.hasActiveSelection?.()) {
-						// Le renderer flashe "Copied!" lui-même en cas de succès.
-						void alt.copyActiveSelectionToClipboard?.();
+						// Sélection dans l'éditeur → texte LOGIQUE propre (pas de "\n"
+						// parasites aux soft-wraps) ; sinon chemin renderer (transcript).
+						// Le renderer flashe "Copied!" lui-même dans les deux cas.
+						const editorText = activeEditor.current?.copyScreenSelectionText();
+						if (editorText !== undefined && alt.copyTextToClipboard) {
+							void alt.copyTextToClipboard(editorText);
+						} else {
+							void alt.copyActiveSelectionToClipboard?.();
+						}
 					}
 					// Sans sélection : neutre. Ctrl+C ne détruit plus le texte.
 					return { consume: true };
