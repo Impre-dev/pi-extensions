@@ -75,8 +75,8 @@ const YELLOW = "\x1b[1;33m"; // jaune bold — cible du mode renommage
 const PAD = "  ";
 
 // ── Calibrage chirurgical (itère avec Impre) ──
-const RACINE_OFFSET_X = 0; // décalage horizontal du bloc au niveau racine (cols)
-const SESSIONS_OFFSET_X = 0; // décalage horizontal du bloc au niveau discussions (cols)
+const BODY_OFFSET_X = 1; // décalage horizontal du body robot+listes (cols, positif = droite) — n'affecte PAS les options du bas — calibré Impre 12/09
+const BODY_OFFSET_Y = 6; // lignes vides insérées au-dessus du body (positif = bas) — les options restent collées au-dessus de la chatbox (filler par différence) ; trop grand = débordement — calibré Impre 12/09
 const LIST_DROP = 9; // décalage vertical : la liste commence sous le haut du robot
 const LIST_WIDTH = 30; // largeur de la colonne liste (labels seuls)
 const ACTION_GAP = 3; // espaces entre les options du bas
@@ -497,15 +497,14 @@ class HubScreen {
 		const showArt = w >= ART_W + 6 + LIST_WIDTH;
 		const listW = Math.min(LIST_WIDTH, Math.max(20, w - 4 - (showArt ? ART_W + 3 : 0)));
 		const rows = this.tui.terminal.rows || 24;
-		const offsetX = this.level === "workspaces" ? RACINE_OFFSET_X : SESSIONS_OFFSET_X;
-
 		const out: string[] = [];
 		out.push("");
+		if (BODY_OFFSET_Y > 0) out.push(...Array(BODY_OFFSET_Y).fill(""));
 
 		// Body centré horizontalement : robot (gauche) + liste (droite, descendue)
 		const gap = 4; // pair => bodyW pair => centrage à la demi-cellule près
 		const bodyW = (showArt ? ART_W + gap : 0) + listW;
-		const bodyX0 = Math.max(0, Math.round((w - bodyW) / 2)) + offsetX;
+		const bodyX0 = Math.max(0, Math.round((w - bodyW) / 2)) + BODY_OFFSET_X;
 		const listLines = [
 			...Array(LIST_DROP).fill(""),
 			...this.selectList.render(listW),
@@ -562,12 +561,12 @@ class HubScreen {
 			hint += t.fg("dim", ` ${a.hint}`) + RESET;
 			spans.push({ x0, x1: visibleWidth(hint), run: a.run });
 		}
-		// Options centrées sur l'axe du body (même centre que robot+liste)
+		// Options centrées sur l'ÉCRAN — indépendantes du body (BODY_OFFSET_X/Y ne les touchent pas)
 		const actionsOffsetX =
 			this.level === "workspaces" ? RACINE_ACTIONS_OFFSET_X : SESSIONS_ACTIONS_OFFSET_X;
 		const padL = Math.max(
 			0,
-			Math.round(bodyX0 + bodyW / 2 - visibleWidth(hint) / 2) + actionsOffsetX,
+			Math.round((w - visibleWidth(hint)) / 2) + actionsOffsetX,
 		);
 		this.hintRow = out.length;
 		this.actionSpans = spans.map((s) => ({ x0: s.x0 + padL, x1: s.x1 + padL, run: s.run }));
