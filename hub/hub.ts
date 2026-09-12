@@ -211,13 +211,20 @@ function getSwitch(ctx: HubContext): SwitchFn | undefined {
 	return typeof fn === "function" ? (fn as SwitchFn) : undefined;
 }
 
-// Accès runtime au ScrollView primaire (getPrimaryScrollView est private côté
-// types, l'instance l'expose — pattern getSwitch ci-dessus).
+// Accès runtime au ScrollView primaire (getPrimaryScrollView est privé côté
+// types, l'instance l'expose — pattern getSwitch ci-dessus). Les membres
+// scrollbar/scrollTo etc. sont publics sur le ScrollView.
+type ScrollViewMode = "hidden" | "auto" | "always";
 type PrimaryScrollView = {
 	scrollTop: number;
 	isFollowingEnd: boolean;
 	scrollTo(top: number): void;
 	scrollToEnd(): void;
+	readonly scrollbar: ScrollViewMode;
+	setScrollbar(scrollbar: ScrollViewMode): void;
+};
+type TuiInternals = {
+	getPrimaryScrollView?: () => PrimaryScrollView | undefined;
 };
 
 // ── L'écran ──
@@ -235,6 +242,7 @@ class HubScreen {
 	private theme!: Theme;
 	private done!: (v: HubResult | null) => void;
 	private savedScroll: { top: number; followingEnd: boolean } | null = null;
+	private savedScrollbar: ScrollViewMode | null = null;
 	private bodyRow = -1;
 	private bodyHeight = 0;
 	private bodyX0 = 0;
@@ -267,10 +275,13 @@ class HubScreen {
 		// margin 1 clampé) tombe dans le transcript = la ligne fantôme. En ramenant
 		// le document en haut, la row 0 redevient le header (vidé, cf. openHub).
 		// Restore au finish : scrollToEnd si on suivait la fin, sinon scrollTop.
-		const sv = (tui as unknown as {
-			getPrimaryScrollView?: () => PrimaryScrollView | undefined;
-		}).getPrimaryScrollView?.();
+		const t = tui as unknown as TuiInternals;
+		const sv = t.getPrimaryScrollView?.();
 		if (sv) {
+			// Scrollbar "hidden" AVANT le scroll : scrollTo déclenche sinon la
+			// scrollbar transitoire (trait fin bref à l'ouverture, constaté TUI).
+			this.savedScrollbar = sv.scrollbar;
+			if (this.savedScrollbar !== "hidden") sv.setScrollbar("hidden");
 			this.savedScroll = { top: sv.scrollTop, followingEnd: sv.isFollowingEnd };
 			sv.scrollTo(0);
 		}
@@ -285,14 +296,16 @@ class HubScreen {
 	}
 
 	private finish(v: HubResult | null): void {
-		if (this.savedScroll) {
-			const sv = (this.tui as unknown as {
-				getPrimaryScrollView?: () => PrimaryScrollView | undefined;
-			}).getPrimaryScrollView?.();
-			if (sv) {
-				if (this.savedScroll.followingEnd) sv.scrollToEnd();
-				else sv.scrollTo(this.savedScroll.top);
-			}
+		const t = this.tui as unknown as TuiInternals;
+		const sv = t.getPrimaryScrollView?.();
+		// Scroll d'abord (scrollbar encore "hidden" → aucun déclenchement),
+		// puis restauration du mode scrollbar.
+		if (this.savedScroll && sv) {
+			if (this.savedScroll.followingEnd) sv.scrollToEnd();
+			else sv.scrollTo(this.savedScroll.top);
+		}
+		if (sv && this.savedScrollbar && this.savedScrollbar !== "hidden") {
+			sv.setScrollbar(this.savedScrollbar);
 		}
 		playActionSound();
 		this.done(v);
