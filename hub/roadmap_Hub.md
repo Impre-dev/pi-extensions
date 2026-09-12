@@ -10,6 +10,7 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
+| v0.20.1 | Calibrage : RACINE_ACTIONS_OFFSET_X 1→0 (centrage options racine, post-épuration v0.20). Validé TUI par Impre | 0f7c308 |
 | v0.20 | Épuration : retrait des boutons Retour et Quitter des options du bas (4 boutons = moche, décision Impre). Keybinds intacts : esc racine = quit pi, esc sessions = retour workspaces, ctrl+n/r/suppr inchangés ; mode armé garde Confirmer/Annuler. Options racine : Accueil · Root · Delete — sessions : New · Rename · Delete | eaec443 |
 | v0.19 | Delete workspace (étape 2/2) : Delete/ctrl+suppr au niveau racine → mode armé rouge → fenêtre confirm avec décompte (« N discussions définitivement supprimées ») → purge cascade (unlink de toutes les sessions) → le workspace disparaît de la liste (liste = scan des sessions). Session active dans le workspace : sortie de secours d'abord (switch vers la plus récente hors workspace), refus sec si aucune destination. Correction vue fantôme : après un delete qui vide le workspace, retour au niveau racine. Validé TUI par Impre (purge toto vérifiée : zéro trace jsonl/session_info) | a95815f |
 | v0.18.1 | Retouche art canon du robot (Impre, install → source, diff complet = 5 lignes ART_LINES). Canon éclairci : dots ⣿ remplacés par espaces sur 5 lignes | 3895e67 |
