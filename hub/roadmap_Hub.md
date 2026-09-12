@@ -10,6 +10,7 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
+| v0.20 | Épuration : retrait des boutons Retour et Quitter des options du bas (4 boutons = moche, décision Impre). Keybinds intacts : esc racine = quit pi, esc sessions = retour workspaces, ctrl+n/r/suppr inchangés ; mode armé garde Confirmer/Annuler. Options racine : Accueil · Root · Delete — sessions : New · Rename · Delete | eaec443 |
 | v0.19 | Delete workspace (étape 2/2) : Delete/ctrl+suppr au niveau racine → mode armé rouge → fenêtre confirm avec décompte (« N discussions définitivement supprimées ») → purge cascade (unlink de toutes les sessions) → le workspace disparaît de la liste (liste = scan des sessions). Session active dans le workspace : sortie de secours d'abord (switch vers la plus récente hors workspace), refus sec si aucune destination. Correction vue fantôme : après un delete qui vide le workspace, retour au niveau racine. Validé TUI par Impre (purge toto vérifiée : zéro trace jsonl/session_info) | a95815f |
 | v0.18.1 | Retouche art canon du robot (Impre, install → source, diff complet = 5 lignes ART_LINES). Canon éclairci : dots ⣿ remplacés par espaces sur 5 lignes | 3895e67 |
 | v0.18 | Delete discussion (étape 1/2 du delete) : bouton Delete + ctrl+suppr → mode armé rouge (ligne + Confirmer/Annuler, clics liste inertes) ; ↵ → fenêtre ctx.ui.confirm ; Yes → unlink + notify. Session active : switch d'abord vers la plus récente du workspace (sortie propre, unlink après — sinon le flush du switch recréerait le fichier), dernière seule → refus sec. getSessionFile() identifie la session active (leçon 16). Navigation clavier active en mode armé (ligne rouge = sélection). Validé TUI par Impre | 78c0cf7 |
@@ -39,9 +40,7 @@
 
 ## 🎯 File priorisée
 
-### 1. Retirer les boutons Retour et Quitter (keybinds conservés) ⭐
-**Demande** : « dans une prochaine étape, on retirera les btn "retour" et "quitter" (pas les keybinds) — en vrai c obvious, et 4 btn c moche »
-**Implémentation** : retirer les libellés des actions du bas (Retour au niveau sessions, Quitter à la racine) ; esc inchangé (onEscape : quit à la racine, niveau supérieur en sessions) — v0.8 avait introduit ces boutons, le delete v0.19 les rend redondants visuellement
+*(vide — le retrait des boutons est livré v0.20)*
 
 ## 🧠 Leçons de plateforme (à ne plus retester)
 
