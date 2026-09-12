@@ -459,9 +459,13 @@ class HubScreen {
 	}
 
 	private armDelete(): void {
-		if (this.level !== "sessions" || this.pendingDelete || this.pendingRename) return;
+		// Les 2 niveaux : discussion sélectionnée (sessions) ou workspace (racine).
+		if (this.pendingDelete || this.pendingRename) return;
 		const sel = this.selectList.getSelectedItem();
-		if (!sel || !String(sel.value).startsWith("sess:")) return;
+		if (!sel) return;
+		const v = String(sel.value);
+		if (this.level === "sessions" && !v.startsWith("sess:")) return;
+		if (this.level === "workspaces" && !v.startsWith("ws:")) return;
 		this.pendingDelete = true;
 		this.rebuild();
 		this.tui.requestRender();
@@ -475,20 +479,31 @@ class HubScreen {
 	}
 
 	private confirmDelete(): void {
-		if (this.level !== "sessions" || !this.pendingDelete) return;
+		if (!this.pendingDelete) return;
 		const sel = this.selectList.getSelectedItem();
-		if (!sel || !String(sel.value).startsWith("sess:")) return;
-		const path = String(sel.value).slice(5);
-		const ws = this.workspaces.find((w) => w.sessions.some((x) => x.path === path));
-		const s = ws?.sessions.find((x) => x.path === path);
-		this.pendingDelete = false;
-		this.finish({
-			action: "delete",
-			kind: "session",
-			path,
-			label: s?.name || firstLine(s?.firstMessage ?? "", 44) || basename(path),
-			cwd: ws?.cwd,
-		});
+		if (!sel) return;
+		const v = String(sel.value);
+		// Discussion sélectionnée (niveau sessions).
+		if (this.level === "sessions" && v.startsWith("sess:")) {
+			const path = v.slice(5);
+			const ws = this.workspaces.find((w) => w.sessions.some((x) => x.path === path));
+			const s = ws?.sessions.find((x) => x.path === path);
+			this.pendingDelete = false;
+			this.finish({
+				action: "delete",
+				kind: "session",
+				path,
+				label: s?.name || firstLine(s?.firstMessage ?? "", 44) || basename(path),
+				cwd: ws?.cwd,
+			});
+			return;
+		}
+		// Workspace sélectionné (niveau racine).
+		if (this.level === "workspaces" && v.startsWith("ws:")) {
+			const cwd = v.slice(3);
+			this.pendingDelete = false;
+			this.finish({ action: "delete", kind: "workspace", cwd, label: basename(cwd) || cwd });
+		}
 	}
 
 	private triggerHome(): void {
@@ -531,8 +546,8 @@ class HubScreen {
 			this.confirmRename();
 			return;
 		}
-		// Ctrl+Suppr sur la sélection : arme la suppression (niveau sessions).
-		if (this.level === "sessions" && matchesKey(data, "ctrl+delete")) {
+		// Ctrl+Suppr sur la sélection : arme la suppression (2 niveaux).
+		if (matchesKey(data, "ctrl+delete")) {
 			this.armDelete();
 			return;
 		}
@@ -646,11 +661,19 @@ class HubScreen {
 			run: () => void;
 		}>;
 		if (this.level === "workspaces") {
-			actions = [
-				{ label: "Accueil", hint: "(ctrl+a)", run: () => this.triggerHome() },
-				{ label: "Root", hint: "(ctrl+d)", run: () => this.triggerRoot() },
-				{ label: "Quitter", hint: "(esc)", run: () => this.finish({ action: "quit" }) },
-			];
+			if (this.pendingDelete) {
+				actions = [
+					{ label: "Confirmer", hint: "(↵)", red: true, run: () => this.confirmDelete() },
+					{ label: "Annuler", hint: "(esc)", run: () => this.cancelDeleteMode() },
+				];
+			} else {
+				actions = [
+					{ label: "Accueil", hint: "(ctrl+a)", run: () => this.triggerHome() },
+					{ label: "Root", hint: "(ctrl+d)", run: () => this.triggerRoot() },
+					{ label: "Delete", hint: "(ctrl+suppr)", run: () => this.armDelete() },
+					{ label: "Quitter", hint: "(esc)", run: () => this.finish({ action: "quit" }) },
+				];
+			}
 		} else if (this.pendingRename) {
 			actions = [
 				{ label: "New", hint: "(ctrl+n)", run: () => this.triggerNew() },
@@ -899,7 +922,62 @@ async function actOnResult(
 		}
 		unlinkSync(result.path);
 		ctx.ui.notify(`Discussion supprimée : ${result.label}`, "info");
-		const again = await openHub(ctx, { openWorkspace: result.cwd });
+		// Retour hub : le workspace s'il vit encore, la racine sinon (pas de vue
+		// fantôme d'un workspace vidé).
+		const fresh = await collectWorkspaces();
+		const stillThere = fresh.some((w) => w.cwd === result.cwd);
+		const again = await openHub(ctx, stillThere ? { openWorkspace: result.cwd } : {});
+		await actOnResult(again, ctx, pi);
+		return;
+	}
+
+	// ── Delete workspace (purge cascade) ──
+	if (result.action === "delete" && result.kind === "workspace" && result.cwd) {
+		const fresh = await collectWorkspaces();
+		const ws = fresh.find((w) => w.cwd === result.cwd);
+		const count = ws?.sessions.length ?? 0;
+		const n = `${count} discussion${count > 1 ? "s" : ""}`;
+		const ok = await ctx.ui.confirm(
+			"Supprimer le workspace",
+			`« ${result.label} » : ${n} seront définitivement supprimées.`,
+		);
+		if (!ok) {
+			const again = await openHub(ctx);
+			await actOnResult(again, ctx, pi);
+			return;
+		}
+		// Session active dans le workspace ? Sortir d'abord vers la plus récente
+		// session hors workspace (leçon 16) — refus sec si aucune destination.
+		const activeFile = ctx.sessionManager.getSessionFile();
+		const activeHere = ws?.sessions.some((s) => s.path === activeFile) ?? false;
+		if (activeHere) {
+			const elsewhere = fresh
+				.filter((w) => w.cwd !== result.cwd)
+				.flatMap((w) => w.sessions)
+				.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+			const sw = getSwitch(ctx);
+			if (elsewhere.length === 0 || !sw) {
+				ctx.ui.notify(
+					"Impossible : c'est la discussion ouverte et seule restante",
+					"warning",
+				);
+				const again = await openHub(ctx);
+				await actOnResult(again, ctx, pi);
+				return;
+			}
+			const target = elsewhere[0];
+			await sw(target.path, {
+				withSession: async (c) => {
+					c.ui.notify(`Reprise : ${target.name || basename(target.path)}`, "info");
+				},
+			});
+		}
+		for (const s of ws?.sessions ?? []) {
+			unlinkSync(s.path);
+		}
+		ctx.ui.notify(`Purge du workspace « ${result.label} » : ${n} supprimée${count > 1 ? "s" : ""}`, "info");
+		// Retour au hub niveau RACINE — le workspace n'existe plus.
+		const again = await openHub(ctx);
 		await actOnResult(again, ctx, pi);
 		return;
 	}
