@@ -81,7 +81,7 @@ const BODY_OFFSET_Y = 6; // lignes vides insérées au-dessus du body (positif =
 const LIST_DROP = 10; // décalage vertical : la liste commence sous le haut du robot — calibré Impre 12/09
 const LIST_WIDTH = 20; // largeur de la colonne liste (labels seuls) — calibré Impre 12/09
 const ACTION_GAP = 3; // espaces entre les options du bas
-const RACINE_ACTIONS_OFFSET_X = 1; // options du bas, niveau racine (cols, négatif = gauche) — calibré
+const RACINE_ACTIONS_OFFSET_X = 0; // options du bas, niveau racine (cols, négatif = gauche) — calibré (1→0 post-épuration v0.20, centrage 3 boutons)
 const SESSIONS_ACTIONS_OFFSET_X = 0; // options du bas, niveau discussions (à tuner)
 const ACTION_SOUND: string = join(getAgentDir(), "extensions", "resources", "key.wav"); // son d'action (.wav — vide = muet)
 const SOUND_PLAYER: string = "C:\\Program Files\\AutoHotkey\\v2\\AutoHotkey64.exe"; // lecteur AHK v2 — ~100ms de démarrage vs ~370ms PowerShell (benché 09/09)
