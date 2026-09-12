@@ -10,6 +10,7 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
+| v0.15 | Layout : position du body indépendante des options. RACINE_OFFSET_X/SESSIONS_OFFSET_X (décalaient tout, options incluses — SESSIONS sans effet visible) remplacées par BODY_OFFSET_X=1 + BODY_OFFSET_Y=6 (calibrés TUI Impre 12/09) ; options du bas recentrées sur l'ÉCRAN (plus sur l'axe du body), micro-offsets RACINE/SESSIONS_ACTIONS_OFFSET_X conservés ; LIST_DROP intacte ; hit-test souris suit via bodyRow dynamique ; filler vertical par différence = options immuables. | 06e4d86 |
 | v0.14.1 | Daemon son : fin de vie polie au switch. Le dialogue AHK « Could not close the previous instance / older instance » survenait à la réouverture du hub après un switch — pi recharge les extensions, la ref du daemon disparaissait sans tuer le process, l'orphelin bloqué sur ReadLine ne traitait pas la demande de fermeture de #SingleInstance. Fix : `pi.on(session_shutdown)` → `stdin.end()` (EOF poli) — le daemon FINIT le son en cours puis sort tout seul (kill() le coupait en plein son, constaté TUI). Respawn frais à l'ouverture du hub, amorçage caché par l'affichage. #SingleInstance Force en filet. | d70745c |
 | v0.14 | RENAME TOTAL session-hub → hub (dossier, fichier, produit, pilotage) + migration du repo Desktop → `O:\Programmation\IDE\Pi\pi-extensions` (move-and-rename.ps1, copy-only — l'ancien dossier reste backup, purge manuelle). Install renommée `session-hub.ts` → `hub.ts` ; dossiers de sessions pi réencodés + champ `cwd` des 48 JSONL réécrits (node, UTF-8 safe) — discussions reprises sans perte (validé terrain : cette session-même reprise depuis le nouveau cwd). Descriptions cosmétiques hub + refs dev (use-art, tsconfig, package, mock-layout) + README. Typecheck ✅. Post-mortem ps1 : suffixe `--` manquant dans le mapping sessions (skip silencieux) → garde abort bruyant ; `node -e` → fichier `.cjs` temp (quoting PS 5.1 mange les quotes) | 0a445e9 |
 | v0.13.1 | FIX du « New » : la session atterrissait dans le chemin d'ouverture de pi au lieu du workspace ciblé. Cause prouvée par logs (`[NEW]`, hub-diag.log) : `SessionManager.create()` flush lazy — le .jsonl n'existe pas au retour, `switchSession` → `SessionManager.open()` ne trouve pas de header → retombe sur `process.cwd()`. Fix : `createFlushedSession()` flush le header officiel (`getHeader()`) avant le switch (les 2 chemins : direct + fallback `/hub --new`). Piste `cwdOverride` écartée (non forwardé par `handleResumeSession`, interactive-mode l.4507). Validé TUI par Impre + validation mécanique script (fileExists false→true, open getCwd = workspace). Retrait des logs `[NEW]` post-validation : retrait passif, aucun chemin d'exécution modifié. | 000b8a3 |
@@ -31,10 +32,9 @@
 
 ## 🎯 File priorisée
 
-### 1. Conversion image → braille dans le pipeline `use-art` ⭐
-**Demande** : « ça peut être une image tout court ? »
-**Mécanisme** : `use-art.mjs` n'accepte que du braille texte ; une image (png/jpg) doit passer par luminance → seuillage/dithering → encode braille.
-**Implémentation** : accepter `.png`/`.jpg` dans `use-art.mjs` (dépendance dev type `pngjs`, dithering Floyd-Steinberg, seuil ajustable) — le rendu du hub reste du braille, fiable partout.
+### 1. Ligne de discussion résiduelle en haut du hub ⭐
+**Demande** : « quand je suis dans une discussion, puis que je reviens dans le hub, la 1ère ligne de la discussion apparaît en haut du hub, ce qui est assez chiant »
+**Mécanisme** : à enquêter — l'overlay (anchor top-center, width 100%, margin top 1) laisse probablement passer une ligne du transcript, ou le hub ne couvre pas la 1ère ligne (1er render / width clampé à 110).
 
 ## 🧠 Leçons de plateforme (à ne plus retester)
 
