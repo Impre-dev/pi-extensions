@@ -25,7 +25,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR_NAME, getAgentDir, SessionManager, VERSION } from "@earendil-works/pi-coding-agent";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, writeSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { SelectList, type SelectItem, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
@@ -72,6 +72,7 @@ const RESET = "\x1b[0m";
 const FLAT = "\x1b[1;32m"; // vert bold — art, sélection, libellés actifs
 const GREEN = "\x1b[32m"; // vert normal — logo header
 const YELLOW = "\x1b[1;33m"; // jaune bold — cible du mode renommage
+const RED = "\x1b[1;31m"; // rouge bold — mode suppression armée
 const PAD = "  ";
 
 // ── Calibrage chirurgical (itère avec Impre) ──
@@ -195,10 +196,11 @@ async function collectWorkspaces(): Promise<Workspace[]> {
 
 // ── Résultat du hub ──
 interface HubResult {
-	action: "switch" | "new" | "quit" | "rename" | "home";
+	action: "switch" | "new" | "quit" | "rename" | "home" | "delete";
 	path?: string;
 	cwd?: string;
 	label?: string;
+	kind?: "session" | "workspace";
 }
 
 // switchSession n'est typé que sur ExtensionCommandContext ; à l'exécution le
@@ -237,6 +239,7 @@ class HubScreen {
 	private showAllWorkspaces = false;
 	private showAllSessions = false;
 	private pendingRename = false;
+	private pendingDelete = false;
 	private selectList!: SelectList;
 	private tui!: { requestRender(): void; terminal: { rows: number } };
 	private theme!: Theme;
@@ -348,9 +351,12 @@ class HubScreen {
 	private rebuild(): void {
 		const t = this.t();
 		const items = this.buildItems();
-		// En mode renommage, la cible (sélection) passe en jaune.
-		const sel = (s: string): string =>
-			this.pendingRename ? YELLOW + s + RESET : t.fg("accent", s);
+		// Modes armés : la cible (sélection) passe en jaune (renommage) ou rouge (suppression).
+		const sel = (s: string): string => {
+			if (this.pendingRename) return YELLOW + s + RESET;
+			if (this.pendingDelete) return RED + s + RESET;
+			return t.fg("accent", s);
+		};
 		this.selectList = new SelectList(
 			items,
 			Math.min(items.length, MAX_VISIBLE),
@@ -367,6 +373,8 @@ class HubScreen {
 	}
 
 	private pick(value: string): void {
+		// Mode suppression armée : les clics liste sont inertes (↵/esc décident).
+		if (this.pendingDelete) return;
 		// En mode renommage, les clics confirment la cible au lieu d'ouvrir.
 		if (this.pendingRename) {
 			this.confirmRename();
@@ -395,6 +403,11 @@ class HubScreen {
 	}
 
 	private onEscape(): void {
+		// Mode suppression armée : Esc désarme d'abord.
+		if (this.pendingDelete) {
+			this.cancelDeleteMode();
+			return;
+		}
 		// Mode renommage : Esc annule le mode d'abord.
 		if (this.pendingRename) {
 			playActionSound();
@@ -445,6 +458,39 @@ class HubScreen {
 		this.finish({ action: "rename", path, label: sel.label, cwd: ws?.cwd });
 	}
 
+	private armDelete(): void {
+		if (this.level !== "sessions" || this.pendingDelete || this.pendingRename) return;
+		const sel = this.selectList.getSelectedItem();
+		if (!sel || !String(sel.value).startsWith("sess:")) return;
+		this.pendingDelete = true;
+		this.rebuild();
+		this.tui.requestRender();
+	}
+
+	private cancelDeleteMode(): void {
+		if (!this.pendingDelete) return;
+		this.pendingDelete = false;
+		this.rebuild();
+		this.tui.requestRender();
+	}
+
+	private confirmDelete(): void {
+		if (this.level !== "sessions" || !this.pendingDelete) return;
+		const sel = this.selectList.getSelectedItem();
+		if (!sel || !String(sel.value).startsWith("sess:")) return;
+		const path = String(sel.value).slice(5);
+		const ws = this.workspaces.find((w) => w.sessions.some((x) => x.path === path));
+		const s = ws?.sessions.find((x) => x.path === path);
+		this.pendingDelete = false;
+		this.finish({
+			action: "delete",
+			kind: "session",
+			path,
+			label: s?.name || firstLine(s?.firstMessage ?? "", 44) || basename(path),
+			cwd: ws?.cwd,
+		});
+	}
+
 	private triggerHome(): void {
 		if (this.level !== "workspaces") return;
 		this.finish({ action: "home" });
@@ -469,9 +515,25 @@ class HubScreen {
 			this.onEscape();
 			return;
 		}
+		// Mode suppression armée : ↵ confirme ; le reste (flèches/filtre) suit la
+		// sélection — la ligne rouge est toujours la sélection courante.
+		if (this.pendingDelete) {
+			if (data === "\r" || data === "\n") {
+				this.confirmDelete();
+				return;
+			}
+			this.selectList.handleInput(data);
+			this.tui.requestRender();
+			return;
+		}
 		// Mode renommage : Enter (ou clic) confirme la cible jaune.
 		if (this.pendingRename && (data === "\r" || data === "\n")) {
 			this.confirmRename();
+			return;
+		}
+		// Ctrl+Suppr sur la sélection : arme la suppression (niveau sessions).
+		if (this.level === "sessions" && matchesKey(data, "ctrl+delete")) {
+			this.armDelete();
 			return;
 		}
 		if (this.level === "workspaces") {
@@ -576,7 +638,13 @@ class HubScreen {
 
 		// Options du bas, centrées sur l'axe du body — cliquables (fullscreen)
 		const t = this.t();
-		let actions: Array<{ label: string; hint: string; yellow?: boolean; run: () => void }>;
+		let actions: Array<{
+			label: string;
+			hint: string;
+			yellow?: boolean;
+			red?: boolean;
+			run: () => void;
+		}>;
 		if (this.level === "workspaces") {
 			actions = [
 				{ label: "Accueil", hint: "(ctrl+a)", run: () => this.triggerHome() },
@@ -589,10 +657,16 @@ class HubScreen {
 				{ label: "Confirmer", hint: "(↵ ou clic)", yellow: true, run: () => this.confirmRename() },
 				{ label: "Annuler", hint: "(esc)", run: () => this.cancelRenameMode() },
 			];
+		} else if (this.pendingDelete) {
+			actions = [
+				{ label: "Confirmer", hint: "(↵)", red: true, run: () => this.confirmDelete() },
+				{ label: "Annuler", hint: "(esc)", run: () => this.cancelDeleteMode() },
+			];
 		} else {
 			actions = [
 				{ label: "New", hint: "(ctrl+n)", run: () => this.triggerNew() },
 				{ label: "Rename", hint: "(ctrl+r)", run: () => this.enterRenameMode() },
+				{ label: "Delete", hint: "(ctrl+suppr)", run: () => this.armDelete() },
 				{ label: "Retour", hint: "(esc)", run: () => this.onEscape() },
 			];
 		}
@@ -601,7 +675,12 @@ class HubScreen {
 		for (const a of actions) {
 			if (hint) hint += " ".repeat(ACTION_GAP);
 			const x0 = visibleWidth(hint);
-			hint += (a.yellow ? YELLOW + t.bold(a.label) : t.fg("accent", t.bold(a.label))) + RESET;
+			hint +=
+				(a.yellow
+					? YELLOW + t.bold(a.label)
+					: a.red
+						? RED + t.bold(a.label)
+						: t.fg("accent", t.bold(a.label))) + RESET;
 			hint += t.fg("dim", ` ${a.hint}`) + RESET;
 			spans.push({ x0, x1: visibleWidth(hint), run: a.run });
 		}
@@ -774,6 +853,54 @@ async function actOnResult(
 		// Fallback sans sw (hub lancé au startup) : même flux nominatif — la
 		// création + le nommage se font ici, puis /hub <id> switchera (leçon 1).
 		await createNamedSession(ctx, pi, result.cwd);
+		return;
+	}
+
+	// ── Delete discussion ──
+	if (result.action === "delete" && result.kind === "session" && result.path) {
+		// Fenêtre de confirmation (mélange : armé inline + confirm pi).
+		const ok = await ctx.ui.confirm(
+			"Supprimer la discussion",
+			`« ${result.label} » sera définitivement supprimée.`,
+		);
+		if (!ok) {
+			const again = await openHub(ctx, { openWorkspace: result.cwd });
+			await actOnResult(again, ctx, pi);
+			return;
+		}
+		// Session active ? Sortir d'abord : switch vers la plus récente restante
+		// du workspace (switch = sortie propre ; unlink après, jamais avant —
+		// sinon le flush du switch recréerait le fichier supprimé).
+		if (ctx.sessionManager.getSessionFile() === result.path) {
+			const remaining = await collectWorkspaces();
+			const candidates =
+				remaining
+					.find((w) => w.cwd === result.cwd)
+					?.sessions.filter((s) => s.path !== result.path) ?? [];
+			const sw = getSwitch(ctx);
+			if (candidates.length === 0 || !sw) {
+				ctx.ui.notify(
+					"Impossible : discussion ouverte et seule du workspace",
+					"warning",
+				);
+				const again = await openHub(ctx, { openWorkspace: result.cwd });
+				await actOnResult(again, ctx, pi);
+				return;
+			}
+			const target = candidates[0];
+			await sw(target.path, {
+				withSession: async (c) => {
+					c.ui.notify(
+						`Reprise : ${target.name || basename(target.path)}`,
+						"info",
+					);
+				},
+			});
+		}
+		unlinkSync(result.path);
+		ctx.ui.notify(`Discussion supprimée : ${result.label}`, "info");
+		const again = await openHub(ctx, { openWorkspace: result.cwd });
+		await actOnResult(again, ctx, pi);
 		return;
 	}
 }
