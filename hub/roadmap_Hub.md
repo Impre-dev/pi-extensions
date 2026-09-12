@@ -39,9 +39,9 @@
 
 ## 🎯 File priorisée
 
-### 1. Delete workspace (étape 2/2 du delete) ⭐
-**Demande** : « je pensais à B » — purge en cascade des discussions du workspace, le workspace disparaît de la liste (décision Impre)
-**Mécanisme** : Delete/ctrl+suppr au niveau racine (mode armé rouge, identique v0.18) → fenêtre confirm avec décompte (« N discussions définitivement supprimées ») → unlink en cascade ; si la session active est dans le workspace → sortie de secours d'abord (switch vers la plus récente session hors workspace), refus sec si plus aucune destination (leçon 16). Le mécanisme session est en place (v0.18) — reste le niveau racine + la cascade + la sortie globale
+### 1. Retirer les boutons Retour et Quitter (keybinds conservés) ⭐
+**Demande** : « dans une prochaine étape, on retirera les btn "retour" et "quitter" (pas les keybinds) — en vrai c obvious, et 4 btn c moche »
+**Implémentation** : retirer les libellés des actions du bas (Retour au niveau sessions, Quitter à la racine) ; esc inchangé (onEscape : quit à la racine, niveau supérieur en sessions) — v0.8 avait introduit ces boutons, le delete v0.19 les rend redondants visuellement
 
 ## 🧠 Leçons de plateforme (à ne plus retester)
 
