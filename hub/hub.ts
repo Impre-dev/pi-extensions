@@ -671,7 +671,6 @@ class HubScreen {
 					{ label: "Accueil", hint: "(ctrl+a)", run: () => this.triggerHome() },
 					{ label: "Root", hint: "(ctrl+d)", run: () => this.triggerRoot() },
 					{ label: "Delete", hint: "(ctrl+suppr)", run: () => this.armDelete() },
-					{ label: "Quitter", hint: "(esc)", run: () => this.finish({ action: "quit" }) },
 				];
 			}
 		} else if (this.pendingRename) {
@@ -690,7 +689,6 @@ class HubScreen {
 				{ label: "New", hint: "(ctrl+n)", run: () => this.triggerNew() },
 				{ label: "Rename", hint: "(ctrl+r)", run: () => this.enterRenameMode() },
 				{ label: "Delete", hint: "(ctrl+suppr)", run: () => this.armDelete() },
-				{ label: "Retour", hint: "(esc)", run: () => this.onEscape() },
 			];
 		}
 		let hint = "";
