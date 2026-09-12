@@ -661,6 +661,41 @@ async function openHub(ctx: HubContext, opts: { openWorkspace?: string } = {}): 
 	}
 }
 
+// New nominatif (12/09) : fenêtre de nom après la fermeture du hub ; esc ou
+// champ vide = annulation → aucune session créée, retour au hub sur le
+// workspace (pattern rename : openHub récursif). Sans sw (hub lancé au
+// startup, leçon 1) : création + nommage puis /hub <id> en followUp — pi
+// re-exécute avec un ctx command (le pouvoir) et switch direct ; le nom voyage
+// par le disque (appendSessionInfo), pas par la ligne de commande.
+async function createNamedSession(ctx: HubContext, pi: ExtensionAPI, cwd: string, sw?: SwitchFn): Promise<void> {
+	const name = (await ctx.ui.input("Nom de la nouvelle discussion :", ""))?.trim();
+	if (!name) {
+		const again = await openHub(ctx, { openWorkspace: cwd });
+		await actOnResult(again, ctx, pi);
+		return;
+	}
+	const file = createFlushedSession(cwd);
+	if (!file) {
+		ctx.ui.notify("Création de session impossible", "error");
+		return;
+	}
+	// Nommage AVANT le switch : la session naît déjà nommée (appendSessionInfo,
+	// mécanisme du Rename — pi ne rebaptise pas une session déjà nommée).
+	SessionManager.open(file).appendSessionInfo(name);
+	if (sw) {
+		await sw(file, {
+			withSession: async (c) => {
+				c.ui.notify(`Nouvelle discussion « ${name} » dans ${basename(cwd)}`, "info");
+			},
+		});
+		return;
+	}
+	pi.sendUserMessage(`/hub ${sessionIdFromPath(file)}`, {
+		deliverAs: "followUp",
+		expandPromptTemplates: true,
+	});
+}
+
 async function actOnResult(
 	result: HubResult | null,
 	ctx: HubContext,
@@ -722,20 +757,7 @@ async function actOnResult(
 	}
 
 	if (sw && result.action === "new" && result.cwd) {
-		const cwd = result.cwd;
-		const file = createFlushedSession(cwd);
-		if (!file) {
-			ctx.ui.notify("Création de session impossible", "error");
-			return;
-		}
-		await sw(file, {
-			withSession: async (c) => {
-				c.ui.notify(
-					`Nouvelle session dans ${basename(cwd)} — /name pour la nommer`,
-					"info",
-				);
-			},
-		});
+		await createNamedSession(ctx, pi, result.cwd, sw);
 		return;
 	}
 
@@ -749,10 +771,9 @@ async function actOnResult(
 		return;
 	}
 	if (result.action === "new" && result.cwd) {
-		pi.sendUserMessage(`/hub --new ${result.cwd}`, {
-			deliverAs: "followUp",
-			expandPromptTemplates: true,
-		});
+		// Fallback sans sw (hub lancé au startup) : même flux nominatif — la
+		// création + le nommage se font ici, puis /hub <id> switchera (leçon 1).
+		await createNamedSession(ctx, pi, result.cwd);
 		return;
 	}
 }
