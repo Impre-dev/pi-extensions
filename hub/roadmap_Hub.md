@@ -10,6 +10,7 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
+| v0.16.1 | FIX trait fin bref à l'ouverture/fermeture du hub : les scrolls programmatiques (scrollTo(0)/scrollToEnd) déclenchaient la scrollbar transitoire du transcript (markScrollbarActivity → trait ~2s). Fix : setScrollbar("hidden") AVANT les scrolls + restore du mode d'origine après (leçon 14). setShowHardwareCursor retiré (le caret hardware n'était pas la cible) | d3d62ac |
 | v0.16 | FIX ligne fantôme (retour discussion → hub) : la row 0 du base layer (non couverte, margin 1 clampé) montrait le haut du document scrollé = transcript. Fix : header vide pendant le hub (setHeader) + document ramené en haut au bind (getPrimaryScrollView().scrollTo(0), accès runtime pattern getSwitch) + restore au finish (scrollToEnd si followingEnd, sinon scrollTop) + header restauré (logo session / minimal home). margin 0 écarté : effets de bord globaux (caret + décalages), 2 tests TUI. Leçon 11 | 405a719 |
 | v0.15.1 | Fix calibrage : LIST_DROP 9→10 + LIST_WIDTH 30→20. Valeurs calibrées TUI par Impre pendant v0.15 mais écrasées par la sync install (reverse partiel : grep ciblé BODY_OFFSET a raté les 2 autres constantes) - reverse dicté par Impre, comportement déjà constaté en TUI | f144d40 |
 | v0.15 | Layout : position du body indépendante des options. RACINE_OFFSET_X/SESSIONS_OFFSET_X (décalaient tout, options incluses — SESSIONS sans effet visible) remplacées par BODY_OFFSET_X=1 + BODY_OFFSET_Y=6 (calibrés TUI Impre 12/09) ; options du bas recentrées sur l'ÉCRAN (plus sur l'axe du body), micro-offsets RACINE/SESSIONS_ACTIONS_OFFSET_X conservés ; LIST_DROP intacte ; hit-test souris suit via bodyRow dynamique ; filler vertical par différence = options immuables. | 06e4d86 |
@@ -34,10 +35,7 @@
 
 ## 🎯 File priorisée
 
-### 1. Masquer le caret bref à l’ouverture du hub ⭐
-**Demande** : « on voit brièvement le curseur (si on peut le masquer brièvement ce serait top) » — constaté TUI 12/09 pendant la validation v0.16
-**Mécanisme** : le caret hardware est positionné via CURSOR_MARKER (leçon 12) — pendant la transition d’ouverture (scroll + header vide), une frame peut l’afficher
-**Implémentation** : setShowHardwareCursor(false) au bind + restore au finish (méthodes publiques TUI, prouvées d.ts l.222-223)
+*(vide — le trait scrollbar est livré v0.16.1 ; prochaine étape à définir avec Impre)*
 
 ## 🧠 Leçons de plateforme (à ne plus retester)
 
@@ -57,3 +55,4 @@
 11. **Architecture overlay du hub : le base layer est scrollé, la row 0 échappe au hub** (12/09) — le hub est un calque composité par-dessus le document pi (compositeOverlays, tui.js) ; il ne couvre que `viewportStart+margin → +height` et le clamp `row = Math.max(marginTop, …)` interdit d’atteindre la row 0. En discussion, le document est scrollé (`viewportStart = result.length - termHeight`) → la row 0 non couverte tombe dans le transcript (header hors écran) = la ligne fantôme. margin 0 couvrirait la row 0 MAIS déclenche des effets de bord globaux (caret visible + décalages en discussion, 2 tests TUI 12/09, mécanisme non élucidé) → ne pas retenter sans labo pi-tui. Voie officielle : contrôler le base (header vide + scrollTo(0)) et restaurer à la fermeture. Preuves : tui.js resolveOverlayLayout/compositeOverlays/doRender + 3 tests TUI 12/09.
 12. **Le caret hardware = CURSOR_MARKER émis par le composant focusé** (12/09) — l’éditeur émet un marqueur APC (`\x1b_pi:c\x07`) à la position du curseur quand focused ; extractCursorPosition cherche le marqueur dans l’image FINALE compositée et positionne le caret (`?25h` si trouvé, `?25l` sinon). Toggle global : setShowHardwareCursor(false) → `?25l` à chaque frame, même si un marqueur traîne. Preuves : tui.js l.49-54 + 978-1004 + doRender l.1481-1487 ; components/editor.js l.426-439 (marker émis si this.focused).
 13. **Le diff-painting skippe les lignes identiques — jamais d’écriture ANSI externe** (12/09) — doRender ne repeint que `screen[row] !== previousScreen[row]` : toute écriture ANSI externe (writeSync) diverge du previousScreen et n’est jamais réparée si la ligne logique ne change pas (row 0 vidée définitivement au retour discussion). Preuve : tui-alt-screen.js doRender l.1478-1482 (lecture code ; constat cohérent avec les symptômes margin 0).
+14. **Tout scroll programmatique du transcript déclenche la scrollbar transitoire** (12/09) — scrollTo/scrollBy/scrollToEnd appellent markScrollbarActivity : si `scrollbar === "auto"` (défaut) et contenu > viewport, la scrollbar s’affiche ~2s (scrollbarHideDelayMs) — le « trait fin bref » constaté par Impre à l’ouverture du hub. Contournement : setScrollbar("hidden") AVANT les scrolls (le setter masque l’immédiat sans re-déclencher), restore du mode d’origine après. Preuves : scroll-view.js l.57-66 (setScrollbar) + l.70-83 (markScrollbarActivity) + TUI 12/09.
