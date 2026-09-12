@@ -211,6 +211,15 @@ function getSwitch(ctx: HubContext): SwitchFn | undefined {
 	return typeof fn === "function" ? (fn as SwitchFn) : undefined;
 }
 
+// Accès runtime au ScrollView primaire (getPrimaryScrollView est private côté
+// types, l'instance l'expose — pattern getSwitch ci-dessus).
+type PrimaryScrollView = {
+	scrollTop: number;
+	isFollowingEnd: boolean;
+	scrollTo(top: number): void;
+	scrollToEnd(): void;
+};
+
 // ── L'écran ──
 const MAX_VISIBLE = 12;
 const RECENT_COUNT = 10;
@@ -225,6 +234,7 @@ class HubScreen {
 	private tui!: { requestRender(): void; terminal: { rows: number } };
 	private theme!: Theme;
 	private done!: (v: HubResult | null) => void;
+	private savedScroll: { top: number; followingEnd: boolean } | null = null;
 	private bodyRow = -1;
 	private bodyHeight = 0;
 	private bodyX0 = 0;
@@ -252,6 +262,18 @@ class HubScreen {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
+		// Scroll-to-top du document (fix ligne fantôme 12/09) : en discussion, le
+		// document est scrollé → la row 0 du base layer (non couverte par le hub,
+		// margin 1 clampé) tombe dans le transcript = la ligne fantôme. En ramenant
+		// le document en haut, la row 0 redevient le header (vidé, cf. openHub).
+		// Restore au finish : scrollToEnd si on suivait la fin, sinon scrollTop.
+		const sv = (tui as unknown as {
+			getPrimaryScrollView?: () => PrimaryScrollView | undefined;
+		}).getPrimaryScrollView?.();
+		if (sv) {
+			this.savedScroll = { top: sv.scrollTop, followingEnd: sv.isFollowingEnd };
+			sv.scrollTo(0);
+		}
 		this.rebuild();
 
 		return {
@@ -263,6 +285,15 @@ class HubScreen {
 	}
 
 	private finish(v: HubResult | null): void {
+		if (this.savedScroll) {
+			const sv = (this.tui as unknown as {
+				getPrimaryScrollView?: () => PrimaryScrollView | undefined;
+			}).getPrimaryScrollView?.();
+			if (sv) {
+				if (this.savedScroll.followingEnd) sv.scrollToEnd();
+				else sv.scrollTo(this.savedScroll.top);
+			}
+		}
 		playActionSound();
 		this.done(v);
 	}
@@ -589,6 +620,11 @@ async function openHub(ctx: HubContext, opts: { openWorkspace?: string } = {}): 
 	const screen = new HubScreen(ctx, workspaces, opts.openWorkspace);
 	ensureSoundDaemon(); // amorce le daemon pendant l'affichage du hub — le 1er son est réactif aussi
 	hubOpen = true;
+	// Header vide pendant le hub (fix ligne fantôme 12/09) : la row 0 du base
+	// layer (non couverte par le hub, margin 1 clampé) doit tomber sur du vide.
+	// Couplé au scroll-to-top du document au bind (sinon le header est scrollé
+	// hors écran en discussion longue et la row 0 retombe dans le transcript).
+	ctx.ui.setHeader(() => ({ render: () => [""], invalidate() {} }));
 	try {
 		return await ctx.ui.custom<HubResult | null>(
 			(tui, theme, _kb, done) => screen.bind(tui, theme, done),
@@ -599,6 +635,16 @@ async function openHub(ctx: HubContext, opts: { openWorkspace?: string } = {}): 
 		);
 	} finally {
 		hubOpen = false;
+		// Restore : logo en session, minimal sur home (le session_start re-fire
+		// de toute façon au switch/new — leçon 5).
+		ctx.ui.setHeader(
+			ctx.cwd === homedir()
+				? () => ({ render: () => [""], invalidate() {} })
+				: (_tui, theme) => ({
+						render: () => buildHeaderLines(theme),
+						invalidate() {},
+					}),
+		);
 	}
 }
 
