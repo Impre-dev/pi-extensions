@@ -9,6 +9,7 @@
 | Version | Contenu | Commit |
 |---|---|---|
 | v0.1 | Marqueur `[⏱ % · tokens/fenêtre]` injecté à chaque `before_agent_start` (1 par run, pas par tour) : message custom LLM-visible + renderer TUI dim/warning/error, seuils 20%/25% memory.md, rappels de règle envoyés au LLM seulement en dérive, « ? » post-compaction. Validé TUI par Impre : ligne visible des deux côtés, % cohérents (6.8% → 6.9% constatés sur fenêtre 1M) | `ae58dc1` |
+| v0.1.1 | Horodatage d'injection `dd/MM HH:mm` dans le marqueur (content LLM + renderer) — ancrage temporel de l'agent, chrono interne peu fiable (flagrant délit du jour). Fallback gracieux : marqueurs v0.1 rendus sans heure. Validé TUI : `— 13/09 15:41` constaté dans le contexte LLM | `11328e9` |
 
 ## 🎯 File priorisée
 
