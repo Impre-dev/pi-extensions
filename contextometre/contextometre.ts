@@ -22,6 +22,12 @@
  * affiche « ? » quand le chiffre est inconnu (juste après une compaction,
  * avant la prochaine réponse LLM).
  *
+ * Chaque marqueur porte l'horodatage d'injection (dd/MM HH:mm) — ancrage
+ * temporel pour l'agent, dont la chronologie interne se reconstruit mal
+ * (flagrant délit du 13/09 : « hier » lâché 10 minutes après le commit du
+ * jour, le % lui-même étant juste). L'heure seule ne suffit pas : 15:42
+ * existe aussi hier.
+ *
  * Seuils (memory.md, recalibrés 13/09) :
  *   ⚠ ≥ WARN — mode transition : plus d'opérations structurelles
  *   🔴 ≥ CRIT — fermeture propre dès la frontière suivante (cahier + git)
@@ -47,11 +53,18 @@ interface UsageDetails {
 	contextWindow: number;
 	percent: number | null;
 	statut: Statut;
+	horodatage: string;
 }
 
 /** 86234 -> "86.2k" (compact, pour la ligne TUI) */
 function fmtK(n: number): string {
 	return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+/** Date -> "13/09 15:42" (compact, lisible des deux côtés du mur) */
+function horodate(d: Date): string {
+	const p2 = (n: number) => String(n).padStart(2, "0");
+	return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
 }
 
 function statutDe(percent: number | null): Statut {
@@ -68,7 +81,8 @@ export default function contextometre(pi: ExtensionAPI) {
 		const d = message.details as UsageDetails | undefined;
 		const pct = d?.percent == null ? "?" : `${d.percent.toFixed(1)}%`;
 		const toks = d == null || d.tokens == null ? "?" : `${fmtK(d.tokens)}/${fmtK(d.contextWindow)}`;
-		const line = `[⏱ ${pct} · ${toks}]`;
+		const hz = d?.horodatage ? ` · ${d.horodatage}` : ""; // marqueurs v0.1 sans horodatage
+		const line = `[⏱ ${pct} · ${toks}${hz}]`;
 		const colored =
 			d?.statut === "crit" ? theme.fg("error", line) :
 			d?.statut === "warn" ? theme.fg("warning", line) :
@@ -84,12 +98,13 @@ export default function contextometre(pi: ExtensionAPI) {
 		const statut = statutDe(usage.percent);
 		const pct = usage.percent === null ? "?" : `${usage.percent.toFixed(1)}%`;
 		const toks = usage.tokens === null ? "?" : `${fmtK(usage.tokens)}/${fmtK(usage.contextWindow)}`;
+		const horodatage = horodate(new Date());
 
 		// Ligne envoyée au LLM — compacte en zone OK, explicative en dérive
-		let content = `Contexte: ${pct} (${toks} tokens)`;
-		if (statut === "warn") content += " — ⚠ ≥20%: mode transition, plus d'opérations structurelles (memory.md)";
-		else if (statut === "crit") content += " — 🔴 ≥25%: fermer proprement à la frontière suivante (écrire cahier + git)";
-		else if (statut === "unknown") content += " — chiffre inconnu (juste après compaction, fiable au prochain tour)";
+		let content = `Contexte: ${pct} (${toks} tokens) — ${horodatage}`;
+		if (statut === "warn") content += ` · ⚠ ≥20%: mode transition, plus d'opérations structurelles (memory.md)`;
+		else if (statut === "crit") content += ` · 🔴 ≥25%: fermer proprement à la frontière suivante (écrire cahier + git)`;
+		else if (statut === "unknown") content += ` · chiffre inconnu (juste après compaction, fiable au prochain tour)`;
 
 		return {
 			message: {
@@ -101,6 +116,7 @@ export default function contextometre(pi: ExtensionAPI) {
 					contextWindow: usage.contextWindow,
 					percent: usage.percent,
 					statut,
+					horodatage,
 				} satisfies UsageDetails,
 			},
 		};
