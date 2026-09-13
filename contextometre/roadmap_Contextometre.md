@@ -8,7 +8,7 @@
 
 | Version | Contenu | Commit |
 |---|---|---|
-| v0.1 | Marqueur `[⏱ % · tokens/fenêtre]` injecté à chaque `before_agent_start` (1 par run, pas par tour) : message custom LLM-visible + renderer TUI dim/warning/error, seuils 20%/25% memory.md, rappels de règle envoyés au LLM seulement en dérive, « ? » post-compaction. Validé TUI par Impre : ligne visible des deux côtés, % cohérents (6.8% → 6.9% constatés sur fenêtre 1M) | `bd8c31f` |
+| v0.1 | Marqueur `[⏱ % · tokens/fenêtre]` injecté à chaque `before_agent_start` (1 par run, pas par tour) : message custom LLM-visible + renderer TUI dim/warning/error, seuils 20%/25% memory.md, rappels de règle envoyés au LLM seulement en dérive, « ? » post-compaction. Validé TUI par Impre : ligne visible des deux côtés, % cohérents (6.8% → 6.9% constatés sur fenêtre 1M) | `ae58dc1` |
 
 ## 🎯 File priorisée
 
