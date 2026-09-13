@@ -63,6 +63,11 @@
  *             partir du texte rendu). Pas d'agrandissement de police possible
  *             (grille terminal uniforme) : le gras + fond compensent.
  *
+ * 11. Frapper un caractère (ou Entrée) avec une sélection écran dans
+ *             l'éditeur REMPLACE la sélection (convention GUI) au lieu de
+ *             s'insérer devant. Undo couvert (snapshot delete par setText,
+ *             puis insert normal).
+ *
  * Pas de redo général : pi n'en a tout simplement pas (aucun code, aucun
  * binding). L'undo (Ctrl+Z) marche, y compris pour nos suppressions via
  * setText. Ici on couvre juste nos suppressions.
@@ -101,6 +106,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CustomEditor, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import {
+	decodeKittyPrintable,
 	matchesKey,
 	sliceByColumn,
 	visibleWidth,
@@ -276,8 +282,39 @@ class MyPiEditor extends CustomEditor {
 		}
 		if (matchesKey(data, "backspace") || matchesKey(data, "delete")) {
 			if (this.deleteScreenSelection()) return;
+		} else if (this.replacesScreenSelection(data)) {
+			// Frappe sur sélection écran éditeur : convention GUI — la sélection
+			// est REMPLACÉE. deleteScreenSelection supprime et pose le curseur au
+			// début de l'ex-sélection ; super.handleInput insère ensuite la frappe
+			// à cet endroit.
+			this.deleteScreenSelection();
 		}
 		super.handleInput(data);
+	}
+
+	/**
+	 * La frappe doit-elle remplacer la sélection écran (convention GUI) ? Oui
+	 * si l'entrée est insérable ET la sélection appartient à l'éditeur.
+	 *
+	 * Insérable : kitty CSI-u imprimable (decodeKittyPrintable rejette déjà
+	 * alt/ctrl) ; sinon encodage legacy — même seuil que le fallback
+	 * d'insertion de pi (editor.js : charCodeAt(0) >= 32, émojis inclus via
+	 * surrogate pair), hors séquences ESC (flèches, bracketed paste…), plus
+	 * Entrée « \r » (replace + submit, convention GUI).
+	 */
+	private replacesScreenSelection(data: string): boolean {
+		const insertable =
+			decodeKittyPrintable(data) !== undefined ||
+			(data.length > 0 && !data.includes("\x1b") && (data.charCodeAt(0) >= 32 || data === "\r"));
+		if (!insertable) return false;
+		return this.hasEditorScreenSelection();
+	}
+
+	/** Sélection écran actuellement dans l'éditeur (convertible géométriquement) ? */
+	private hasEditorScreenSelection(): boolean {
+		const bounds = this.alt.getSelectionBounds?.();
+		if (!bounds || bounds.start.scrollView || bounds.end.scrollView) return false;
+		return this.screenSelectionToEditorRange(bounds) !== undefined;
 	}
 
 	/**
