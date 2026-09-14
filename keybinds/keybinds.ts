@@ -138,6 +138,12 @@ interface AltScreenInternals {
 	scrollToEndIndicator?: () => string;
 	/** Présent sur TuiBase, absent de l'interface TUI — comparaison d'identité uniquement. */
 	getFocusedComponent?(): unknown;
+	/** Pose de sélection par code (Ctrl+A select-all) — champs internes TuiAltScreen. */
+	selectionAnchor?: ScreenSelectionPoint;
+	selectionFocus?: ScreenSelectionPoint;
+	selectionGranularity?: string;
+	selectionInitialRange?: unknown;
+	requestRender?(): void;
 }
 
 /** Point de sélection écran (TuiAltScreen.getSelectionBounds). */
@@ -146,6 +152,8 @@ interface ScreenSelectionPoint {
 	col: number;
 	/** ScrollView d'origine : défini = sélection transcript, absent = écran physique. */
 	scrollView?: unknown;
+	/** End exact : la colonne du point est prise telle quelle (sinon caractère sous le point inclus). */
+	boundary?: boolean;
 }
 
 /** Bornes d'une sélection écran (start toujours avant end). */
@@ -280,6 +288,14 @@ class MyPiEditor extends CustomEditor {
 			this.deleteScreenSelection();
 			return;
 		}
+		if (matchesKey(data, "ctrl+a")) {
+			// Select-all du champ (convention GUI, F-09) : pose la sélection écran
+			// sur tout le texte visible de l'éditeur. Rien à sélectionner → pas de
+			// return, le natif (cursorLineStart) passe — sur éditeur vide c'est
+			// équivalent. L'utilisateur perd début-de-ligne sur Ctrl+A (Home/Ctrl+Home
+			// restent) : trade-off assumé du select-all.
+			if (this.selectAllInEditor()) return;
+		}
 		if (matchesKey(data, "backspace") || matchesKey(data, "delete")) {
 			if (this.deleteScreenSelection()) return;
 		} else if (this.replacesScreenSelection(data)) {
@@ -315,6 +331,65 @@ class MyPiEditor extends CustomEditor {
 		const bounds = this.alt.getSelectionBounds?.();
 		if (!bounds || bounds.start.scrollView || bounds.end.scrollView) return false;
 		return this.screenSelectionToEditorRange(bounds) !== undefined;
+	}
+
+	/**
+	 * Ctrl+A : pose la sélection écran sur tout le TEXTE visible de l'éditeur.
+	 * La pose est l'assignation directe des champs internes de TuiAltScreen
+	 * (selectionAnchor/selectionFocus — points {row,col}, boundary sur le end) :
+	 * le surlignage suit automatiquement (applySelection au paint) et la
+	 * sélection survit aux inputs clavier. Tout le pipeline aval est déjà
+	 * validé : Ctrl+C géométrique v1.3, frappe remplace v1.4, cut/suppr.
+	 * Limite assumée (F-06) : le texte au-delà du viewport reste hors sélection
+	 * — la sélection écran vit sur les rows visuelles.
+	 * Retourne false si rien à sélectionner (vide, métriques absentes) →
+	 * l'appelant laisse le natif passer.
+	 */
+	private selectAllInEditor(): boolean {
+		if (this.getText().length === 0) return false;
+
+		const internals = this.editorInternals;
+		const scrollOffset = internals.scrollOffset;
+		const visible = internals.renderedVisibleLineCount;
+		const lastWidth = internals.lastWidth;
+		if (typeof scrollOffset !== "number" || typeof visible !== "number" || typeof lastWidth !== "number") {
+			return false;
+		}
+		const layoutLines = internals.layoutText?.(lastWidth);
+		if (!Array.isArray(layoutLines)) return false;
+
+		const tuiLayout = this.tui as unknown as EpureTui; // même accès que la vue épurée
+		const box = findEditorBox(tuiLayout.currentLayout?.root as EditorLayoutBox | undefined, this);
+		const rect = box?.rect;
+		if (!rect || !Array.isArray(box.lines)) return false;
+
+		// Fenêtre visible de layoutLines, bornée aux lignes NON VIDES : les rows
+		// vides n'apportent rien au texte et bloqueraient la conversion v1.3.
+		const windowLines = layoutLines.slice(scrollOffset, scrollOffset + visible);
+		let firstIdx = -1;
+		let lastIdx = -1;
+		for (let i = 0; i < windowLines.length; i++) {
+			if ((windowLines[i]?.text ?? "").length > 0) {
+				if (firstIdx === -1) firstIdx = i;
+				lastIdx = i;
+			}
+		}
+		if (firstIdx === -1 || lastIdx === -1) return false;
+
+		const paddingXSetting = typeof internals.paddingX === "number" ? internals.paddingX : 0;
+		const paddingX = Math.min(paddingXSetting, Math.max(0, Math.floor((rect.width - 1) / 2)));
+		const x = rect.x + paddingX;
+
+		this.alt.selectionAnchor = { row: rect.y + 1 + firstIdx, col: x };
+		this.alt.selectionFocus = {
+			row: rect.y + 1 + lastIdx,
+			col: x + visibleWidth(windowLines[lastIdx]?.text ?? ""),
+			boundary: true,
+		};
+		this.alt.selectionGranularity = "character";
+		this.alt.selectionInitialRange = undefined;
+		this.alt.requestRender?.();
+		return true;
 	}
 
 	/**
