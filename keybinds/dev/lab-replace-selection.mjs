@@ -5,11 +5,14 @@
  * DEVANT la sélection (pi ne connaît pas la sélection écran — c'est un état
  * renderer). Convention GUI : la frappe REMPLACE la sélection.
  *
- * Fix testé ici (miroir MyPiEditor.handleInput v1.5) : si l'entrée est
+ * Fix testé ici (miroir MyPiEditor.handleInput) : si l'entrée est
  * insérable (même seuil que le fallback d'insertion de pi : kitty CSI-u
  * imprimable ou charCodeAt(0) >= 32, hors séquences ESC, plus Entrée) ET la
  * sélection appartient à l'éditeur → suppression géométrique d'abord (v1.3,
  * posée le curseur à range.start), puis insertion native par super.
+ * v1.6 (F-07) : le bracketed paste (\x1b[200~…) REMPLACE aussi la sélection
+ * éditeur (convention GUI) — garde sélection ÉDITEUR uniquement, miroir du
+ * includes pi editor.js, paste fragmenté couvert.
  *
  * Pipeline réel : TuiAltScreen + Editor dans le dock, drag souris SGR.
  *
@@ -249,24 +252,32 @@ function deleteScreenSelectionMirror(tui, editor) {
 	return true;
 }
 
-/** Miroir replacesScreenSelection (v1.5). */
-function replacesScreenSelection(tui, editor, data) {
-	const insertable =
-		decodeKittyPrintable(data) !== undefined ||
-		(data.length > 0 && !data.includes("\x1b") && (data.charCodeAt(0) >= 32 || data === "\r"));
-	if (!insertable) return false;
+/** Miroir hasEditorScreenSelection (sélection écran appartenant à l'éditeur ?). */
+function hasEditorScreenSelectionMirror(tui, editor) {
 	const bounds = tui.getSelectionBounds();
 	if (!bounds || bounds.start.scrollView || bounds.end.scrollView) return false;
 	return screenSelectionToEditorRange(tui, editor, bounds) !== undefined;
 }
 
-/** Miroir MyPiEditor.handleInput (parties sélection ; sans cut/redo ici). */
-function editorHandleInputV15(tui, editor, data) {
+/** Miroir replacesScreenSelection (frappe insérable + sélection éditeur). */
+function replacesScreenSelection(tui, editor, data) {
+	const insertable =
+		decodeKittyPrintable(data) !== undefined ||
+		(data.length > 0 && !data.includes("\x1b") && (data.charCodeAt(0) >= 32 || data === "\r"));
+	if (!insertable) return false;
+	return hasEditorScreenSelectionMirror(tui, editor);
+}
+
+/** Miroir MyPiEditor.handleInput (v1.6 : + bracketed paste remplace la sélection, F-07). */
+function editorHandleInputMirror(tui, editor, data) {
 	if ((data === "\x7f" || data === "\x1b[3~") && deleteScreenSelectionMirror(tui, editor)) {
 		// backspace/delete : consommé si sélection éditeur
 		return;
 	}
-	if (replacesScreenSelection(tui, editor, data)) {
+	if (data.includes("\x1b[200~") && hasEditorScreenSelectionMirror(tui, editor)) {
+		// bracketed paste : le collage remplace la sélection éditeur (F-07)
+		deleteScreenSelectionMirror(tui, editor);
+	} else if (replacesScreenSelection(tui, editor, data)) {
 		deleteScreenSelectionMirror(tui, editor);
 	}
 	editor.handleInput(data);
@@ -286,7 +297,7 @@ const CASES = [
 			editor.setText(TEXT);
 			tui.renderNow();
 			dragWords(tui, "ligne de test", "ligne de test"); // sélection d'un mot ligne 1
-			editorHandleInputV15(tui, editor, "X");
+			editorHandleInputMirror(tui, editor, "X");
 		},
 		expected: (before) => before.replace("premiere ligne de test", "premiere X"),
 	},
@@ -297,7 +308,7 @@ const CASES = [
 			editor.setText(TEXT);
 			tui.renderNow();
 			dragWords(tui, "ligne longue", "wrappee"); // sélection à travers le wrap
-			editorHandleInputV15(tui, editor, "X");
+			editorHandleInputMirror(tui, editor, "X");
 		},
 		expected: (before) => {
 			const a = before.indexOf("ligne longue");
@@ -314,7 +325,7 @@ const CASES = [
 			editor.setText(TEXT);
 			tui.renderNow();
 			dragWords(tui, "ligne de test", "ligne de test");
-			editorHandleInputV15(tui, editor, "\r");
+			editorHandleInputMirror(tui, editor, "\r");
 			return { submitted };
 		},
 		// submitValue vide l'éditeur après onSubmit — le texte AVANT vidage est dans `submitted`.
@@ -329,7 +340,7 @@ const CASES = [
 			editor.setText(TEXT);
 			tui.renderNow();
 			dragWords(tui, "ligne de test", "ligne de test");
-			editorHandleInputV15(tui, editor, "\x1b[C");
+			editorHandleInputMirror(tui, editor, "\x1b[C");
 		},
 		expected: (before) => before, // texte inchangé
 	},
@@ -340,7 +351,7 @@ const CASES = [
 			editor.setText(TEXT);
 			tui.renderNow();
 			dragWords(tui, "TRANSCRIPT contenu", "EDITEUR");
-			editorHandleInputV15(tui, editor, "X");
+			editorHandleInputMirror(tui, editor, "X");
 		},
 		// Le X s'insère au curseur (fin d'éditeur) mais AUCUN texte n'est supprimé :
 		// la sélection transcript ne doit jamais déclencher la suppression éditeur.
@@ -355,7 +366,7 @@ const CASES = [
 			editor.state.cursorLine = 0;
 			editor.setCursorCol(1);
 			tui.renderNow();
-			editorHandleInputV15(tui, editor, "X");
+			editorHandleInputMirror(tui, editor, "X");
 		},
 		expected: () => "aXbc",
 	},
@@ -366,7 +377,7 @@ const CASES = [
 			editor.setText(TEXT);
 			tui.renderNow();
 			dragWords(tui, "ligne de test", "ligne de test");
-			editorHandleInputV15(tui, editor, "\x1b[120u");
+			editorHandleInputMirror(tui, editor, "\x1b[120u");
 		},
 		expected: (before) => before.replace("premiere ligne de test", "premiere x"),
 	},
@@ -377,7 +388,7 @@ const CASES = [
 			editor.setText(TEXT);
 			tui.renderNow();
 			dragWords(tui, "ligne de test", "ligne de test");
-			editorHandleInputV15(tui, editor, "\x1b[120;;u");
+			editorHandleInputMirror(tui, editor, "\x1b[120;;u");
 		},
 		expected: (before) => before, // ni suppression ni insertion (decodeKittyPrintable = undefined, fallback ESC exclu)
 	},
@@ -388,16 +399,79 @@ const CASES = [
 			editor.setText(TEXT);
 			tui.renderNow();
 			dragWords(tui, "ligne de test", "ligne de test");
-			editorHandleInputV15(tui, editor, "\x7f");
+			editorHandleInputMirror(tui, editor, "\x7f");
 		},
 		expected: (before) => before.replace("premiere ligne de test", "premiere "),
+	},
+	{
+		id: "P1",
+		label: "bracketed paste un bloc sur sélection → remplacement (F-07)",
+		setup: (tui, editor) => {
+			editor.setText(TEXT);
+			tui.renderNow();
+			dragWords(tui, "ligne de test", "ligne de test");
+			editorHandleInputMirror(tui, editor, "\x1b[200~COLLE\x1b[201~");
+		},
+		expected: (before) => before.replace("premiere ligne de test", "premiere COLLE"),
+	},
+	{
+		id: "P2",
+		label: "bracketed paste multi-lignes sur sélection à travers le wrap → remplacement",
+		setup: (tui, editor) => {
+			editor.setText(TEXT);
+			tui.renderNow();
+			dragWords(tui, "ligne longue", "wrappee");
+			editorHandleInputMirror(tui, editor, "\x1b[200~abc\ndef\x1b[201~");
+		},
+		expected: (before) => {
+			const a = before.indexOf("ligne longue");
+			const b = before.indexOf("wrappee") + "wrappee".length;
+			return before.slice(0, a) + "abc\ndef" + before.slice(b);
+		},
+	},
+	{
+		id: "P3",
+		label: "bracketed paste avec sélection TRANSCRIPT → pas de suppression (garde éditeur, miroir R5)",
+		setup: (tui, editor) => {
+			editor.setText(TEXT);
+			tui.renderNow();
+			dragWords(tui, "TRANSCRIPT contenu", "EDITEUR");
+			editorHandleInputMirror(tui, editor, "\x1b[200~COLLE\x1b[201~");
+		},
+		expected: (before) => before + "COLLE",
+	},
+	{
+		id: "P4",
+		label: "bracketed paste SANS sélection → insertion au curseur (pas de régression)",
+		setup: (tui, editor) => {
+			editor.setText("abc");
+			tui.renderNow();
+			editor.state.cursorLine = 0;
+			editor.setCursorCol(1);
+			tui.renderNow();
+			editorHandleInputMirror(tui, editor, "\x1b[200~COLLE\x1b[201~");
+		},
+		expected: () => "aCOLLEbc",
+	},
+	{
+		id: "P5",
+		label: "bracketed paste fragmenté (3 blocs) sur sélection → remplacement une seule fois",
+		setup: (tui, editor) => {
+			editor.setText(TEXT);
+			tui.renderNow();
+			dragWords(tui, "ligne de test", "ligne de test");
+			editorHandleInputMirror(tui, editor, "\x1b[200~col"); // 1er bloc : porte le préfixe → delete
+			editorHandleInputMirror(tui, editor, "lé"); // payload brut : sélection déjà vide → pas de double delete
+			editorHandleInputMirror(tui, editor, "\x1b[201~"); // terminateur → handlePaste insère
+		},
+		expected: (before) => before.replace("premiere ligne de test", "premiere collé"),
 	},
 ];
 
 let passed = 0;
 let total = 0;
 console.log("==========================================================================");
-console.log(`LABO — frappe remplace la sélection (v1.5) — ${COLS}x${ROWS}`);
+console.log(`LABO — frappe ET paste remplacent la sélection (v1.6, F-07) — ${COLS}x${ROWS}`);
 console.log("==========================================================================\n");
 for (const c of CASES) {
 	total++;

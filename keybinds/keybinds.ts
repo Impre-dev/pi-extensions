@@ -298,6 +298,16 @@ class MyPiEditor extends CustomEditor {
 		}
 		if (matchesKey(data, "backspace") || matchesKey(data, "delete")) {
 			if (this.deleteScreenSelection()) return;
+		} else if (data.includes("\x1b[200~") && this.hasEditorScreenSelection()) {
+			// Paste (bracketed paste, F-07) : convention GUI — le collage REMPLACE
+			// la sélection éditeur. deleteScreenSelection pose le curseur au début
+			// de l'ex-sélection ; super.handleInput route le paste (pasteBuffer pi,
+			// handlePaste : undo couvert) qui s'insère à cet endroit. Garde :
+			// sélection ÉDITEUR uniquement — un paste dans le champ ne mange pas une
+			// sélection transcript (miroir du frappe-remplace v1.4). includes (pas
+			// startsWith) : miroir du check pi editor.js. Paste fragmenté : ce
+			// premier bloc suffit — les suivants trouvent une sélection déjà vide.
+			this.deleteScreenSelection();
 		} else if (this.replacesScreenSelection(data)) {
 			// Frappe sur sélection écran éditeur : convention GUI — la sélection
 			// est REMPLACÉE. deleteScreenSelection supprime et pose le curseur au
