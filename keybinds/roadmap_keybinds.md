@@ -1,6 +1,6 @@
 # Roadmap keybinds
 
-> Document de pilotage — statut au 12/09. Extension pi : tweaks UX fullscreen Windows.
+> Document de pilotage — statut au 14/09. Extension pi : tweaks UX fullscreen Windows.
 > Source de dev : `keybinds/` — install : `~/.pi/agent/extensions/keybinds.ts`.
 > (ex-MyPiKeybinds — renommé et centralisé dans pi-extensions le 10/09.)
 
@@ -19,7 +19,9 @@
 ### 1. Copie transcript reflowée (plus de « \n » parasites aux soft-wraps) ⭐
 **Demande** : « quand je copie un truc, les retours à la lignes sont pris en compte ce qui très chiant, surtout quand je veux copier une commande »
 **Mécanisme** : la conversion géométrique v1.3 ne couvre que l'éditeur ; pour le transcript, la copie passe par `getActiveSelectionText` natif qui joint les rows VISUELLES par `\n` — or les composants wrappent eux-mêmes (`scrollContentLines` post-wrap) → chaque soft-wrap = un retour à la ligne au clipboard. Fix proposé (symétrique de v1.3) : re-render du child du ScrollView à largeur 2000 → une entrée par ligne logique ; partitionnement séquentiel (`mapLayoutLinesToRanges`) des rows écran contre ces lignes ; bornes de sélection → offsets via `getSelectionColumns` de pi → slice logique. Garde stricte : partition TOTALE ou fallback natif.
-**Constat v1.5-écartée** : labo `dev/lab-transcript-copy.mjs` 7/7 (drag SGR, Markdown réel, dupliqués, CJK) mais **réel ko** — comportement identique à avant (fallback natif silencieux). Suspect n°1 : au moins un composant du vrai transcript non déterministe entre le dernier paint et le re-render (timestamp relatif, état de collapse…) → garde stricte → fallback partout. Code retiré de l'extension (découplage du 13/09, le fix 2 validé a été commité seul) ; lab gardé en local (non commité). Prochaine étape : diagnostic en réel avec instrumentation (compter les ranges manquants + logguer la première row désync) — un point à la fois.
+**Constat v1.5-écartée (13/09)** : labo `dev/lab-transcript-copy.mjs` 7/7 (drag SGR, Markdown réel, dupliqués, CJK) mais **réel ko** — fallback natif silencieux. Code retiré (découplage : le fix 2 validé commité seul → v1.4).
+**Constat v1.6b-écartée (14/09)** : réintégration en partition PAR COMPOSANT + instrumentation copyDebug → 2 verdicts réels : (1) **perf** — re-render intégral TOUS composants × 2 largeurs (11858 screenLines) à chaque Ctrl+C = ~2 min de blocage / CPU 80% ; (2) **diagnostic obtenu** — log `~/.pi/agent/keybinds-copy-debug.log` : T6 « offsets invalides (start=undefined, end=undefined, rows 11853→11855, screenLines=11858) » à CHAQUE tentative → garde stricte → fallback natif (= les `\n` persistants). Écartée sans itération supplémentaire : mécanisme re-render+partition = cul-de-sac (coût perf structurel + mapping fragile — 3 réels ko malgré labs verts). Archivée branche locale `scratch/v1.6b-transcript-copy` (ff26dfb) ; install restaurée v1.4 (sync.ps1, vérifié).
+**Prochaine étape** : brief à froid d'une approche DIFFÉRENTE sur base v1.4 clean — candidates : ancre fiable par offsets cumulés (render(contentWidth) seul, sans le render 2000), bornes OSC-133 (ordinals de v1.1). Le pourquoi du `start=undefined` (T6) est la première brique diagnostique.
 
 En attente de décision (discovery) : F-04 (mode épuré persisté), F-05 (listeners perdus après switch tui-mode à chaud — backport du fix lazy au Ctrl+C/molette), F-06 (étendre une sélection au-delà du viewport), F-07 (paste ne remplace pas la sélection), F-08 (flèches ne vident pas la sélection écran).
 
