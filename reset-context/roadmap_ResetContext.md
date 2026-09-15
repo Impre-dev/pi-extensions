@@ -6,7 +6,7 @@ Extension pi : reset du contexte **dans** la discussion — `/reset` compacte ve
 
 | Version | Quoi | Validation | Hash |
 |---|---|---|---|
-| v0.1.0 | `/reset` (commande + hook sélectif) + lab miroir 6 checks | Lab vert 6/6 + typecheck strict OK — commit pi-extensions après validation opérateur (/reload + /reset en session réelle) | cf. git |
+| v0.1.0 | `/reset` + `/r` (commande + hook sélectif) + lab miroir 12 checks | Lab vert 12/12 + typecheck strict ✅ + validé en réel par Impre : 2 vols (39 637 / 41 315 tokens) — pointeur substitué, ancrage absolu, re-orientation artefacts complète | 39896b8 | cf. git |
 
 ## File priorisée
 
