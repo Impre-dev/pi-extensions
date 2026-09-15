@@ -15,7 +15,7 @@ $installDir = Join-Path $env:USERPROFILE ".pi\agent\extensions"
 $repoRoot   = Split-Path $PSScriptRoot -Parent
 
 # Extensions installables (custom-header est une archive : PAS installee, role absorbe par le hub en v0.2)
-$extensions = @("hub", "keybinds", "multi-rules", "contextometre")
+$extensions = @("hub", "keybinds", "multi-rules", "contextometre", "reset-context")
 
 $changed = 0; $same = 0; $missing = 0
 
