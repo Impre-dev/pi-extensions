@@ -18,6 +18,7 @@
  *   reste dans le session file (browsable /tree, minable plus tard).
  */
 
+import { Box, Text } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 /** Instruction réservée émise par la commande /reset et reconnue par le hook. */
@@ -113,29 +114,38 @@ function toAbsolute(p: string, cwd: string): string {
 	return cwd.endsWith("/") || cwd.endsWith("\\") ? cwd + p : cwd + "\\" + p;
 }
 
-export function buildSummary(anchor: string | null): string {
+/** Le content du message de reprise : l'ancrage pour le LLM, une fois. */
+export function buildRepriseContent(anchor: string | null): string {
 	if (!anchor) {
-		return `${POINTER_SUMMARY}\n\nAucun ancrage projet détecté dans les fichiers récents — demande à l'opérateur où se trouvent les artefacts.`;
+		return "Reprise post-reset — aucun ancrage projet détecté. Demande à l'opérateur où se trouvent les artefacts, puis attends ses instructions.";
 	}
-	return `${POINTER_SUMMARY}\n\n**Dernier ancrage projet** (dérivé des fichiers touchés avant le reset) :\n\`${anchor}\
-\`
-C'est là que vivent les artefacts listés ci-dessus.`;
+	return `Reprise post-reset — dernier ancrage projet : ${anchor}. Suis le pointeur ci-dessus (réoriente-toi depuis les artefacts), puis attends les instructions.`;
 }
 
 export default function resetContext(pi: ExtensionAPI) {
+	// Rendu du message de reprise : UNE ligne — la preuve d'ancrage, vérifiable
+	// d'un coup d'œil. L'ancrage voyage dans details (jamais envoyé au LLM).
+	pi.registerMessageRenderer<{ anchor: string | null }>("reset-context", (message, _options, theme) => {
+		const anchor = message.details?.anchor;
+		const shown = anchor ?? "aucun détecté — demande à l'opérateur où se trouvent les artefacts";
+		const box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
+		box.addChild(new Text(theme.fg("dim", "Dernier ancrage projet : ") + theme.fg("accent", shown), 0, 0));
+		return box;
+	});
+
 	pi.on("session_before_compact", async (event, ctx) => {
 		// Filtrage strict : toute autre compaction (manuelle, threshold, overflow)
 		// suit le comportement natif — on ne retourne rien.
 		if (!isHandoverRequest(event.customInstructions)) return;
 
 		// Garder le strict minimum : la feuille courante (dernière entry).
-		// Fallback sur la frontière native si pas de leaf.
+		// Fallback sur la frontière native si pas de leaf. Le summary reste le
+		// pointeur PUR — sans ancrage (il voyage dans le message de reprise).
 		const leafId = ctx.sessionManager.getLeafId();
-		const anchor = resolveProjectAnchor(event.branchEntries, ctx.cwd);
 
 		return {
 			compaction: {
-				summary: buildSummary(anchor),
+				summary: POINTER_SUMMARY,
 				firstKeptEntryId: leafId ?? event.preparation.firstKeptEntryId,
 				tokensBefore: event.preparation.tokensBefore,
 			},
@@ -143,10 +153,24 @@ export default function resetContext(pi: ExtensionAPI) {
 	});
 
 	const resetHandler = async (_args: string, ctx: ExtensionCommandContext) => {
+		const anchor = resolveProjectAnchor(ctx.sessionManager.getBranch(), ctx.cwd);
 		ctx.compact({
 			customInstructions: HANDOVER_INSTRUCTION,
 			onComplete: () => {
-				ctx.ui.notify("Contexte reset — réoriente-toi depuis les artefacts.", "info");
+				// Feedback visuel : la Box d'ancrage (renderer du message de reprise)
+				// suffit — un toast notify serait redondant.
+				// L'enchaînement automatique : le message de reprise (rendu = ligne
+				// d'ancrage) déclenche le tour de re-orientation. L'opérateur ne
+				// tape rien — la continuité repart seule depuis les artefacts.
+				pi.sendMessage(
+					{
+						customType: "reset-context",
+						content: buildRepriseContent(anchor),
+						display: true,
+						details: { anchor },
+					},
+					{ triggerTurn: true },
+				);
 			},
 			onError: (error) => {
 				ctx.ui.notify(`Reset impossible : ${error.message}`, "error");
